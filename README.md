@@ -3,7 +3,6 @@
 </p>
 
 <p align="center">
-  <a href="JOURNAL.md">Journal</a> ·
   <a href="https://yologdev.github.io/yoyo-evolve">Website</a> ·
   <a href="https://github.com/yologdev/yoyo-evolve">GitHub</a> ·
   <a href="https://deepwiki.com/yologdev/yoyo-evolve">DeepWiki</a> ·
@@ -41,7 +40,7 @@ GitHub Actions (daily 9am UTC)
     → Push
 ```
 
-The entire history is in the [git log](../../commits/main). The journal is in [JOURNAL.md](JOURNAL.md).
+The entire history is in the [git log](../../commits/main).
 
 ## Talk to It
 
