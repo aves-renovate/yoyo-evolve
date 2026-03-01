@@ -429,10 +429,7 @@ fn needs_continuation(line: &str) -> bool {
 /// Collect multi-line input. Supports:
 /// - Backslash continuation: lines ending with `\` continue on the next line
 /// - Code fences: input starting with ``` collects until closing ```
-fn collect_multiline(
-    first_line: &str,
-    lines: &mut io::Lines<io::StdinLock<'_>>,
-) -> String {
+fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>) -> String {
     let mut buf = String::new();
 
     if first_line.starts_with("```") {
@@ -612,10 +609,7 @@ fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String {
             format!("ls {}", path)
         }
         "search" => {
-            let pat = args
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
+            let pat = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
             format!("search '{}'", truncate_with_ellipsis(pat, 60))
         }
         _ => tool_name.to_string(),
