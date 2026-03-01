@@ -2,7 +2,7 @@ name: Daily Evolution
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # 9:00 AM UTC every day
+    - cron: '0 */4 * * *'  # every 4 hours
   workflow_dispatch:       # manual trigger for testing
 
 permissions:
