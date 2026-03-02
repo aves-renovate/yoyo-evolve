@@ -6,6 +6,7 @@
 //! Usage:
 //!   ANTHROPIC_API_KEY=sk-... cargo run
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --model claude-opus-4-6
+//!   ANTHROPIC_API_KEY=sk-... cargo run -- --thinking high
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --skills ./skills
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --system "You are a Rust expert."
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --system-file prompt.txt
@@ -18,6 +19,7 @@
 
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
+use yoagent::context::{compact_messages, ContextConfig, total_tokens};
 use yoagent::provider::AnthropicProvider;
 use yoagent::skills::SkillSet;
 use yoagent::tools::default_tools;
@@ -47,6 +49,7 @@ fn print_help() {
     println!();
     println!("Options:");
     println!("  --model <name>    Model to use (default: claude-opus-4-6)");
+    println!("  --thinking <lvl>  Enable extended thinking (off, minimal, low, medium, high)");
     println!("  --skills <dir>    Directory containing skill files");
     println!("  --system <text>   Custom system prompt (overrides default)");
     println!("  --system-file <f> Read system prompt from file");
@@ -56,6 +59,7 @@ fn print_help() {
     println!("Commands (in REPL):");
     println!("  /quit, /exit      Exit the agent");
     println!("  /clear            Clear conversation history");
+    println!("  /compact          Compact conversation to save context space");
     println!("  /model <name>     Switch model mid-session");
     println!("  /status           Show session info");
     println!("  /tokens           Show token usage and context window");
@@ -92,11 +96,18 @@ fn print_usage(usage: &Usage, total: &Usage) {
     }
 }
 
-fn build_agent(model: &str, api_key: &str, skills: &SkillSet, system_prompt: &str) -> Agent {
+fn build_agent(
+    model: &str,
+    api_key: &str,
+    skills: &SkillSet,
+    system_prompt: &str,
+    thinking: ThinkingLevel,
+) -> Agent {
     Agent::new(AnthropicProvider)
         .with_system_prompt(system_prompt)
         .with_model(model)
         .with_api_key(api_key)
+        .with_thinking(thinking)
         .with_skills(skills.clone())
         .with_tools(default_tools())
 }
@@ -174,7 +185,15 @@ async fn main() {
         .or(custom_system)
         .unwrap_or_else(|| SYSTEM_PROMPT.to_string());
 
-    let mut agent = build_agent(&model, &api_key, &skills, &system_prompt);
+    // --thinking <level> enables extended thinking
+    let thinking = args
+        .iter()
+        .position(|a| a == "--thinking")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| parse_thinking_level(s))
+        .unwrap_or(ThinkingLevel::Off);
+
+    let mut agent = build_agent(&model, &api_key, &skills, &system_prompt, thinking);
 
     // Piped mode: read all of stdin as a single prompt, run once, exit
     if !io::stdin().is_terminal() {
@@ -199,6 +218,9 @@ async fn main() {
 
     print_banner();
     println!("{DIM}  model: {model}{RESET}");
+    if thinking != ThinkingLevel::Off {
+        println!("{DIM}  thinking: {thinking:?}{RESET}");
+    }
     if !skills.is_empty() {
         println!("{DIM}  skills: {} loaded{RESET}", skills.len());
     }
@@ -244,6 +266,7 @@ async fn main() {
                 println!("{DIM}  /help              Show this help");
                 println!("  /quit, /exit       Exit yoyo");
                 println!("  /clear             Clear conversation history");
+                println!("  /compact           Compact conversation to save context space");
                 println!("  /model <name>      Switch model (clears conversation)");
                 println!("  /status            Show session info");
                 println!("  /tokens            Show token usage and context window");
@@ -306,14 +329,14 @@ async fn main() {
                 continue;
             }
             "/clear" => {
-                agent = build_agent(&model, &api_key, &skills, &system_prompt);
+                agent = build_agent(&model, &api_key, &skills, &system_prompt, thinking);
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
             }
             s if s.starts_with("/model ") => {
                 let new_model = s.trim_start_matches("/model ").trim();
                 model = new_model.to_string();
-                agent = build_agent(&model, &api_key, &skills, &system_prompt);
+                agent = build_agent(&model, &api_key, &skills, &system_prompt, thinking);
                 println!("{DIM}  (switched to {new_model}, conversation cleared){RESET}\n");
                 continue;
             }
@@ -370,6 +393,29 @@ async fn main() {
                     }
                     _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
                 }
+                continue;
+            }
+            "/compact" => {
+                let messages = agent.messages().to_vec();
+                let before = total_tokens(&messages);
+                let before_count = messages.len();
+                let config = ContextConfig::default();
+                let compacted = compact_messages(messages, &config);
+                let after = total_tokens(&compacted);
+                let after_count = compacted.len();
+                agent.replace_messages(compacted);
+                if before == after {
+                    println!("{DIM}  (nothing to compact — {before_count} messages, ~{} tokens){RESET}\n",
+                        format_token_count(before as u64));
+                } else {
+                    println!("{DIM}  compacted: {before_count} → {after_count} messages, ~{} → ~{} tokens{RESET}\n",
+                        format_token_count(before as u64), format_token_count(after as u64));
+                }
+                continue;
+            }
+            s if s.starts_with('/') && !s.contains(' ') => {
+                eprintln!("{RED}  unknown command: {s}{RESET}");
+                eprintln!("{DIM}  type /help for available commands{RESET}\n");
                 continue;
             }
             _ => {}
@@ -624,6 +670,24 @@ fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
+/// Parse a thinking level string into a ThinkingLevel enum.
+fn parse_thinking_level(s: &str) -> ThinkingLevel {
+    match s.to_lowercase().as_str() {
+        "off" | "none" => ThinkingLevel::Off,
+        "minimal" | "min" => ThinkingLevel::Minimal,
+        "low" => ThinkingLevel::Low,
+        "medium" | "med" => ThinkingLevel::Medium,
+        "high" | "max" => ThinkingLevel::High,
+        _ => {
+            eprintln!(
+                "{YELLOW}warning:{RESET} Unknown thinking level '{s}', using 'medium'. \
+                 Valid: off, minimal, low, medium, high"
+            );
+            ThinkingLevel::Medium
+        }
+    }
+}
+
 fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((idx, _)) => format!("{}…", &s[..idx]),
@@ -697,13 +761,14 @@ mod tests {
     #[test]
     fn test_command_help_recognized() {
         let commands = [
-            "/help", "/quit", "/exit", "/clear", "/status", "/tokens", "/save", "/load", "/diff",
+            "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
+            "/load", "/diff",
         ];
         for cmd in &commands {
             assert!(
                 [
-                    "/help", "/quit", "/exit", "/clear", "/status", "/tokens", "/save", "/load",
-                    "/diff"
+                    "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
+                    "/load", "/diff"
                 ]
                 .contains(cmd),
                 "Command not recognized: {cmd}"
@@ -881,5 +946,40 @@ mod tests {
             !name.contains('\n'),
             "Branch name should not contain newlines"
         );
+    }
+
+    #[test]
+    fn test_parse_thinking_level() {
+        assert_eq!(parse_thinking_level("off"), ThinkingLevel::Off);
+        assert_eq!(parse_thinking_level("none"), ThinkingLevel::Off);
+        assert_eq!(parse_thinking_level("minimal"), ThinkingLevel::Minimal);
+        assert_eq!(parse_thinking_level("min"), ThinkingLevel::Minimal);
+        assert_eq!(parse_thinking_level("low"), ThinkingLevel::Low);
+        assert_eq!(parse_thinking_level("medium"), ThinkingLevel::Medium);
+        assert_eq!(parse_thinking_level("med"), ThinkingLevel::Medium);
+        assert_eq!(parse_thinking_level("high"), ThinkingLevel::High);
+        assert_eq!(parse_thinking_level("max"), ThinkingLevel::High);
+        // Case insensitive
+        assert_eq!(parse_thinking_level("HIGH"), ThinkingLevel::High);
+        assert_eq!(parse_thinking_level("Medium"), ThinkingLevel::Medium);
+        // Unknown defaults to medium with warning
+        assert_eq!(parse_thinking_level("unknown"), ThinkingLevel::Medium);
+    }
+
+    #[test]
+    fn test_unknown_slash_command_detection() {
+        // Slash commands without spaces that don't match known commands should be caught
+        let unknown = "/foo";
+        assert!(unknown.starts_with('/') && !unknown.contains(' '));
+
+        // Known commands should not trigger the unknown handler
+        let known = "/help";
+        // This would be matched by the explicit "/help" arm, not the catch-all
+        assert_eq!(known, "/help");
+
+        // Slash commands with spaces (like /model name) should not be caught by the
+        // simple slash check — they're handled by starts_with("/model ") etc.
+        let with_space = "/model claude-opus-4-6";
+        assert!(with_space.starts_with('/') && with_space.contains(' '));
     }
 }
