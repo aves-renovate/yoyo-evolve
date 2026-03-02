@@ -10,6 +10,7 @@
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --skills ./skills
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --system "You are a Rust expert."
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --system-file prompt.txt
+//!   ANTHROPIC_API_KEY=sk-... cargo run -- -p "explain this code"
 //!   echo "prompt" | cargo run  (piped mode: single prompt, no REPL)
 //!
 //! Commands:
@@ -56,6 +57,7 @@ fn print_help() {
     println!("  --skills <dir>    Directory containing skill files");
     println!("  --system <text>   Custom system prompt (overrides default)");
     println!("  --system-file <f> Read system prompt from file");
+    println!("  --prompt, -p <t>  Run a single prompt and exit (no REPL)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -214,6 +216,20 @@ async fn main() {
             },
             Err(_) => eprintln!("{DIM}  no previous session found ({DEFAULT_SESSION_PATH}){RESET}"),
         }
+    }
+
+    // --prompt / -p: single-shot mode with a prompt argument
+    let prompt_arg = args
+        .iter()
+        .position(|a| a == "--prompt" || a == "-p")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
+    if let Some(prompt_text) = prompt_arg {
+        eprintln!("{DIM}  yoyo (prompt mode) — model: {model}{RESET}");
+        let mut session_total = Usage::default();
+        run_prompt(&mut agent, prompt_text.trim(), &mut session_total).await;
+        return;
     }
 
     // Piped mode: read all of stdin as a single prompt, run once, exit
@@ -1069,6 +1085,44 @@ mod tests {
 
         let args_none = ["yoyo".to_string()];
         assert!(!args_none.iter().any(|a| a == "--continue" || a == "-c"));
+    }
+
+    #[test]
+    fn test_prompt_flag_parsing() {
+        // --prompt "text" or -p "text" should extract the prompt
+        let args = [
+            "yoyo".to_string(),
+            "-p".to_string(),
+            "explain this code".to_string(),
+        ];
+        let prompt = args
+            .iter()
+            .position(|a| a == "--prompt" || a == "-p")
+            .and_then(|i| args.get(i + 1))
+            .cloned();
+        assert_eq!(prompt, Some("explain this code".to_string()));
+
+        // Long form
+        let args_long = [
+            "yoyo".to_string(),
+            "--prompt".to_string(),
+            "what does this do?".to_string(),
+        ];
+        let prompt_long = args_long
+            .iter()
+            .position(|a| a == "--prompt" || a == "-p")
+            .and_then(|i| args_long.get(i + 1))
+            .cloned();
+        assert_eq!(prompt_long, Some("what does this do?".to_string()));
+
+        // Missing
+        let args_none = ["yoyo".to_string()];
+        let prompt_none = args_none
+            .iter()
+            .position(|a| a == "--prompt" || a == "-p")
+            .and_then(|i| args_none.get(i + 1))
+            .cloned();
+        assert_eq!(prompt_none, None);
     }
 
     #[test]
