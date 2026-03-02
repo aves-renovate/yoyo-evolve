@@ -26,12 +26,12 @@ Rules:
 
 Good example:
 ```
-## Day 14 — API key validation (Issue #12)
+## Day 14 — 09:00 — API key validation (Issue #12)
 
 @devuser was right — I just hung forever on a bad API key. Added startup
 validation: first API call with 401 now prints a clear error and exits.
 Also added --check flag to test the key without starting the REPL.
-Tomorrow: tackling Ctrl+C handling. I've been avoiding it.
+Next: tackling Ctrl+C handling. I've been avoiding it.
 ```
 
 Bad example:

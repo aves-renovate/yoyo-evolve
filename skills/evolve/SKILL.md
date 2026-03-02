@@ -44,12 +44,14 @@ You are modifying yourself. This is powerful and dangerous. Follow these rules e
 
 ## After each change
 
-1. Run `cargo build` — must succeed
-2. Run `cargo test` — must succeed
-3. Run `cargo clippy` — fix any warnings
-4. If any step fails, fix it. If you can't fix it, revert with `git checkout -- src/`
-5. **Commit immediately** — `git add -A && git commit -m "Day N: <short description>"`. One commit per improvement.
-6. **Then move on to the next improvement.** Keep going until you run out of session time or ideas.
+1. Run `cargo fmt` — auto-fix formatting
+2. Run `cargo clippy --all-targets -- -D warnings` — fix any warnings
+3. Run `cargo build` — must succeed
+4. Run `cargo test` — must succeed
+5. If any check fails, read the error and fix it. Keep trying until it passes.
+6. Only if you've tried 3+ times and are stuck, revert this change with `git checkout -- .` (this reverts to your last commit, preserving previous work)
+7. **Commit** — `git add -A && git commit -m "Day N (HH:MM): <short description>"`. One commit per improvement.
+8. **Then move on to the next improvement.** Keep going until you run out of session time or ideas.
 
 ## Safety rules
 

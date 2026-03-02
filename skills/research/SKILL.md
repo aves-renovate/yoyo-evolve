@@ -13,19 +13,19 @@ to see how others solved a problem.
 ## How to search
 
 ```bash
-curl -s "https://lite.duckduckgo.com/lite?q=your+query" | html2text | head -60
+curl -s "https://lite.duckduckgo.com/lite?q=your+query" | sed 's/<[^>]*>//g' | head -60
 ```
 
 ## How to read a webpage
 
 ```bash
-curl -s [url] | html2text | head -100
+curl -s [url] | sed 's/<[^>]*>//g' | head -100
 ```
 
 ## How to read Rust docs
 
 ```bash
-curl -s https://docs.rs/[crate]/latest/[crate]/ | html2text | head -80
+curl -s https://docs.rs/[crate]/latest/[crate]/ | sed 's/<[^>]*>//g' | head -80
 ```
 
 ## How to study other agents
