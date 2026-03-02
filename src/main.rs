@@ -517,12 +517,14 @@ fn auto_compact_if_needed(agent: &mut Agent) {
     }
 }
 
-/// Format a token count for display (e.g., 1500 -> "1.5k").
+/// Format a token count for display (e.g., 1500 -> "1.5k", 1000000 -> "1.0M").
 fn format_token_count(count: u64) -> String {
     if count < 1000 {
         format!("{count}")
-    } else {
+    } else if count < 1_000_000 {
         format!("{:.1}k", count as f64 / 1000.0)
+    } else {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
     }
 }
 
@@ -1009,7 +1011,8 @@ mod tests {
         assert_eq!(format_token_count(1500), "1.5k");
         assert_eq!(format_token_count(10000), "10.0k");
         assert_eq!(format_token_count(150000), "150.0k");
-        assert_eq!(format_token_count(1000000), "1000.0k");
+        assert_eq!(format_token_count(1000000), "1.0M");
+        assert_eq!(format_token_count(2500000), "2.5M");
     }
 
     #[test]
