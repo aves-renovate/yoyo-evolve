@@ -101,6 +101,40 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         return None;
     }
 
+    // Validate that flags requiring values actually have them
+    let flags_needing_values = [
+        "--model",
+        "--thinking",
+        "--max-tokens",
+        "--skills",
+        "--system",
+        "--system-file",
+        "--prompt",
+        "-p",
+        "--output",
+        "-o",
+    ];
+    for flag in &flags_needing_values {
+        if let Some(pos) = args.iter().position(|a| a == flag) {
+            match args.get(pos + 1) {
+                None => {
+                    eprintln!("{RED}error:{RESET} {flag} requires a value");
+                    eprintln!("Run with --help for usage information.");
+                    std::process::exit(1);
+                }
+                Some(next)
+                    if next.starts_with('-')
+                        && !next.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) =>
+                {
+                    eprintln!(
+                        "{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     let api_key = match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
         Ok(key) if !key.is_empty() => key,
         _ => {
@@ -411,5 +445,11 @@ mod tests {
             .and_then(|i| args.get(i + 1))
             .and_then(|s| s.parse::<u32>().ok());
         assert_eq!(max_tokens, None);
+    }
+
+    #[test]
+    fn test_no_color_flag_recognized() {
+        let args = ["yoyo".to_string(), "--no-color".to_string()];
+        assert!(args.iter().any(|a| a == "--no-color"));
     }
 }
