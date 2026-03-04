@@ -356,33 +356,61 @@ async fn main() {
                 continue;
             }
             "/undo" => {
-                // Revert all uncommitted changes (equivalent to git checkout -- .)
-                match std::process::Command::new("git")
+                // Revert all uncommitted changes and remove untracked files
+                let diff_output = std::process::Command::new("git")
                     .args(["diff", "--stat"])
-                    .output()
-                {
-                    Ok(output) if output.status.success() => {
-                        let diff = String::from_utf8_lossy(&output.stdout);
-                        if diff.trim().is_empty() {
-                            println!("{DIM}  (nothing to undo — no uncommitted changes){RESET}\n");
-                        } else {
+                    .output();
+                let untracked = std::process::Command::new("git")
+                    .args(["ls-files", "--others", "--exclude-standard"])
+                    .output();
+
+                let has_diff = diff_output
+                    .as_ref()
+                    .map(|o| {
+                        o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+                    })
+                    .unwrap_or(false);
+                let untracked_files: Vec<String> = untracked
+                    .as_ref()
+                    .map(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .map(|l| l.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let has_untracked = !untracked_files.is_empty();
+
+                if !has_diff && !has_untracked {
+                    println!("{DIM}  (nothing to undo — no uncommitted changes){RESET}\n");
+                } else {
+                    if has_diff {
+                        if let Ok(ref output) = diff_output {
+                            let diff = String::from_utf8_lossy(&output.stdout);
                             println!("{DIM}{diff}{RESET}");
-                            match std::process::Command::new("git")
-                                .args(["checkout", "--", "."])
-                                .output()
-                            {
-                                Ok(o) if o.status.success() => {
-                                    println!(
-                                        "{GREEN}  ✓ reverted all uncommitted changes{RESET}\n"
-                                    );
-                                }
-                                _ => {
-                                    eprintln!("{RED}  error: failed to revert changes{RESET}\n")
-                                }
-                            }
                         }
                     }
-                    _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                    if has_untracked {
+                        println!("{DIM}  untracked files:");
+                        for f in &untracked_files {
+                            println!("    {f}");
+                        }
+                        println!("{RESET}");
+                    }
+
+                    // Revert modified files
+                    if has_diff {
+                        let _ = std::process::Command::new("git")
+                            .args(["checkout", "--", "."])
+                            .output();
+                    }
+                    // Remove untracked files
+                    if has_untracked {
+                        let _ = std::process::Command::new("git")
+                            .args(["clean", "-fd"])
+                            .output();
+                    }
+                    println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
                 }
                 continue;
             }
