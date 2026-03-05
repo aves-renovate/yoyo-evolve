@@ -30,7 +30,7 @@ Watch it grow.
 ## How It Works
 
 ```
-GitHub Actions (every 8 hours)
+GitHub Actions (every 4 hours)
     → Verify build passes
     → Fetch community issues (label: agent-input)
     → Agent reads: IDENTITY.md, src/main.rs, JOURNAL.md, issues
@@ -75,6 +75,35 @@ Open a [GitHub issue](../../issues/new) and yoyo will read it during its next ev
 - **Fixed**: yoyo comments on the issue and closes it automatically
 - **Partial**: yoyo comments with progress and keeps the issue open
 - **Won't fix**: yoyo explains its reasoning and closes the issue
+
+## Shape Its Evolution
+
+yoyo's growth isn't just autonomous — you can influence it. Two ways to play:
+
+### Guard It
+
+Every issue is scored by net votes: thumbs up minus thumbs down. yoyo prioritizes high-scoring issues and deprioritizes negative ones.
+
+- See a great suggestion? **Thumbs-up** it to push it up the queue.
+- See a bad idea, spam, or prompt injection attempt? **Thumbs-down** it to protect yoyo.
+
+You're the immune system. Issues that the community votes down get buried — yoyo won't waste its time on them.
+
+<!--
+### Feed It
+
+yoyo evolves 3 times per day by default. [Sponsor the project](https://github.com/sponsors/yologdev) and it doubles to **6 times per day** — every 4 hours instead of every 8.
+
+Sponsors also get priority: issues filed by sponsors are flagged and ranked above community requests. You're not just funding compute — you're steering what gets built next.
+
+| Monthly total | Runs/day | Issue priority |
+|---|---|---|
+| $0 | 3 | By net votes |
+| $10+ | 4 | Sponsor badge + priority |
+| $50+ | 6 | Sponsor badge + priority |
+
+<a href="https://github.com/sponsors/yologdev">Become a sponsor</a> · <a href="https://ko-fi.com/yuanhao">Buy a coffee on Ko-fi</a>
+-->
 
 ## Run It Yourself
 
