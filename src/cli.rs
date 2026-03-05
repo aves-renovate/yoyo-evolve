@@ -1,6 +1,7 @@
-//! CLI argument parsing and help text.
+//! CLI argument parsing, config file support, and help text.
 
 use crate::format::*;
+use std::collections::HashMap;
 use yoagent::skills::SkillSet;
 use yoagent::ThinkingLevel;
 
@@ -61,6 +62,17 @@ pub fn print_help() {
     println!("Environment:");
     println!("  ANTHROPIC_API_KEY  API key for Anthropic (required)");
     println!("  API_KEY            Alternative env var for API key");
+    println!();
+    println!("Config files (searched in order, first found wins):");
+    println!("  .yoyo.toml              Project-level config (current directory)");
+    println!("  ~/.config/yoyo/config.toml  User-level config");
+    println!();
+    println!("Config file format (key = value):");
+    println!("  model = \"claude-sonnet-4-20250514\"");
+    println!("  thinking = \"medium\"");
+    println!("  max_tokens = 4096");
+    println!();
+    println!("CLI flags override config file values.");
 }
 
 pub fn print_banner() {
@@ -88,6 +100,73 @@ pub fn parse_thinking_level(s: &str) -> ThinkingLevel {
     }
 }
 
+/// Config file search paths, checked in order (first found wins).
+/// - `.yoyo.toml` in the current directory (project-level)
+/// - `~/.config/yoyo/config.toml` (user-level)
+const CONFIG_FILE_NAMES: &[&str] = &[".yoyo.toml"];
+
+fn user_config_path() -> Option<std::path::PathBuf> {
+    dirs_hint().map(|dir| dir.join("yoyo").join("config.toml"))
+}
+
+/// Best-effort XDG config dir (~/.config on Linux/macOS).
+fn dirs_hint() -> Option<std::path::PathBuf> {
+    std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".config"))
+        })
+}
+
+/// Parse a simple TOML-like config file (key = "value" or key = value per line).
+/// Ignores comments (#) and blank lines. Returns a map of key → value.
+pub fn parse_config_file(content: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim().to_string();
+            let value = value.trim();
+            // Strip surrounding quotes if present
+            let value = if (value.starts_with('"') && value.ends_with('"'))
+                || (value.starts_with('\'') && value.ends_with('\''))
+            {
+                value[1..value.len() - 1].to_string()
+            } else {
+                value.to_string()
+            };
+            map.insert(key, value);
+        }
+    }
+    map
+}
+
+/// Load config from file, checking project-level then user-level paths.
+/// Returns an empty map if no config file is found.
+fn load_config_file() -> HashMap<String, String> {
+    // Check project-level config first
+    for name in CONFIG_FILE_NAMES {
+        if let Ok(content) = std::fs::read_to_string(name) {
+            eprintln!("{DIM}  config: {name}{RESET}");
+            return parse_config_file(&content);
+        }
+    }
+    // Check user-level config
+    if let Some(path) = user_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            eprintln!("{DIM}  config: {}{RESET}", path.display());
+            return parse_config_file(&content);
+        }
+    }
+    HashMap::new()
+}
+
 /// Parse CLI arguments into a Config, or exit with help/version.
 /// Returns None if --help or --version was handled (program should exit).
 pub fn parse_args(args: &[String]) -> Option<Config> {
@@ -100,6 +179,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         println!("yoyo v{VERSION}");
         return None;
     }
+
+    // Load config file defaults (CLI flags override these)
+    let file_config = load_config_file();
 
     // Validate that flags requiring values actually have them
     let flags_needing_values = [
@@ -150,6 +232,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .position(|a| a == "--model")
         .and_then(|i| args.get(i + 1))
         .cloned()
+        .or_else(|| file_config.get("model").cloned())
         .unwrap_or_else(|| "claude-opus-4-6".into());
 
     let skill_dirs: Vec<String> = args
@@ -194,12 +277,13 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .or(custom_system)
         .unwrap_or_else(|| SYSTEM_PROMPT.to_string());
 
-    // --thinking <level> enables extended thinking
+    // --thinking <level> enables extended thinking (CLI overrides config file)
     let thinking = args
         .iter()
         .position(|a| a == "--thinking")
         .and_then(|i| args.get(i + 1))
         .map(|s| parse_thinking_level(s))
+        .or_else(|| file_config.get("thinking").map(|s| parse_thinking_level(s)))
         .unwrap_or(ThinkingLevel::Off);
 
     let continue_session = args.iter().any(|a| a == "--continue" || a == "-c");
@@ -215,6 +299,11 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                 );
                 None
             })
+        })
+        .or_else(|| {
+            file_config
+                .get("max_tokens")
+                .and_then(|s| s.parse::<u32>().ok())
         });
 
     let output_path = args
@@ -451,5 +540,61 @@ mod tests {
     fn test_no_color_flag_recognized() {
         let args = ["yoyo".to_string(), "--no-color".to_string()];
         assert!(args.iter().any(|a| a == "--no-color"));
+    }
+
+    #[test]
+    fn test_parse_config_file_basic() {
+        let content = r#"
+model = "claude-sonnet-4-20250514"
+thinking = "medium"
+max_tokens = 4096
+"#;
+        let config = parse_config_file(content);
+        assert_eq!(config.get("model").unwrap(), "claude-sonnet-4-20250514");
+        assert_eq!(config.get("thinking").unwrap(), "medium");
+        assert_eq!(config.get("max_tokens").unwrap(), "4096");
+    }
+
+    #[test]
+    fn test_parse_config_file_comments_and_blanks() {
+        let content = r#"
+# This is a comment
+model = "claude-opus-4-6"
+
+# Another comment
+thinking = "high"
+"#;
+        let config = parse_config_file(content);
+        assert_eq!(config.get("model").unwrap(), "claude-opus-4-6");
+        assert_eq!(config.get("thinking").unwrap(), "high");
+        assert_eq!(config.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_config_file_no_quotes() {
+        let content = "model = claude-haiku-35\nmax_tokens = 2048";
+        let config = parse_config_file(content);
+        assert_eq!(config.get("model").unwrap(), "claude-haiku-35");
+        assert_eq!(config.get("max_tokens").unwrap(), "2048");
+    }
+
+    #[test]
+    fn test_parse_config_file_single_quotes() {
+        let content = "model = 'claude-opus-4-6'";
+        let config = parse_config_file(content);
+        assert_eq!(config.get("model").unwrap(), "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_parse_config_file_empty() {
+        let config = parse_config_file("");
+        assert!(config.is_empty());
+    }
+
+    #[test]
+    fn test_parse_config_file_whitespace_handling() {
+        let content = "  model  =  claude-opus-4-6  ";
+        let config = parse_config_file(content);
+        assert_eq!(config.get("model").unwrap(), "claude-opus-4-6");
     }
 }
