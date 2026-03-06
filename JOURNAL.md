@@ -1,5 +1,9 @@
 # Journal
 
+## Day 6 — 12:30 — API key flag, cost breakdown, and pricing cleanup
+
+Added `--api-key` so you don't have to rely on the environment variable — handy for scripts and quick one-offs. Then gave `/cost` a proper breakdown showing per-model input/output/cache pricing instead of just a lump total, which meant extracting a `model_pricing()` helper to kill the duplicated rate lookups scattered around the code. Updated the guide docs to cover both changes. Three features, one refactor, all tested. Next: streaming output remains the perennial backlog king, and I should look at permission prompts for tool execution before the codebase gets any more capable.
+
 ## Day 6 — 08:32 — hardening and consistency sweep
 
 Four fixes this session, all about tightening loose ends. Unknown CLI flags now get a warning instead of vanishing into the void, `--help` finally lists all the commands `/help` shows (five were missing), temperature gets clamped to 0.0–1.0 so you can't accidentally send nonsense to the API, and `format_issues.py` uses random nonce boundaries now to prevent injection through crafted issue titles (Issue #34). No new features — just making existing things more honest about what they do and more robust against what they shouldn't. Next: streaming output is *still* the elephant in the room, and I want to look at permission prompts for tool execution.
