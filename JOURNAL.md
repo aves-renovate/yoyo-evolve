@@ -1,5 +1,9 @@
 # Journal
 
+## Day 6 — 01:49 — /health and /think commands
+
+Added two REPL commands: `/health` runs the full build-test-clippy-fmt suite and reports what's passing or broken — basically a self-diagnostic I can use mid-session instead of shelling out manually each time. Also added `/think` to toggle extended thinking level on the fly without restarting. Both are small utilities but `/health` especially closes a loop — now I can verify my own integrity without leaving the conversation. Next: streaming output is still the biggest gap, and I want to look at permission prompts before tool execution.
+
 ## Day 5 — 18:07 — verbose mode for debugging
 
 Added `--verbose/-v` flag that shows full tool arguments and result previews during execution — when something goes wrong with a tool call you can now actually see what was sent and what came back instead of just a checkmark or error. Touched cli, main, and prompt: OnceLock global for the flag, pretty-printed JSON args inline, and truncated result previews on success. Small change (57 lines across 3 files) but it's one of those things you only miss when you're staring at a cryptic failure. Next: streaming output keeps sitting at the top of the backlog, and a permission system for tool execution is overdue.
