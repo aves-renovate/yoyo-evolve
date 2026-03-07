@@ -226,12 +226,23 @@ pub async fn run_prompt(
     let mut in_text = false;
     let mut tool_timers: HashMap<String, Instant> = HashMap::new();
     let mut collected_text = String::new();
+    let mut turn_count: usize = 0;
 
     loop {
         tokio::select! {
             event = rx.recv() => {
                 let Some(event) = event else { break };
                 match event {
+                    AgentEvent::TurnStart => {
+                        turn_count += 1;
+                        if turn_count >= 2 {
+                            if in_text {
+                                println!();
+                                in_text = false;
+                            }
+                            println!("{DIM}  turn {turn_count}{RESET}");
+                        }
+                    }
                     AgentEvent::ToolExecutionStart {
                         tool_call_id, tool_name, args, ..
                     } => {
@@ -580,5 +591,64 @@ mod tests {
         let text = "hello world";
         let excerpt = build_excerpt(text, "xyz", 40);
         assert!(excerpt.is_empty());
+    }
+
+    /// Format a turn indicator string, returning None for turn 1 (skip it).
+    /// This mirrors the logic in run_prompt's TurnStart handler.
+    #[cfg(test)]
+    fn format_turn_indicator(turn_count: usize) -> Option<String> {
+        if turn_count >= 2 {
+            Some(format!("{DIM}  turn {turn_count}{RESET}"))
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn test_turn_counter_skips_turn_1() {
+        // Turn 1 should produce no output (it's obvious)
+        assert!(format_turn_indicator(1).is_none());
+    }
+
+    #[test]
+    fn test_turn_counter_shows_turn_2() {
+        let indicator = format_turn_indicator(2);
+        assert!(indicator.is_some());
+        let text = indicator.unwrap();
+        assert!(text.contains("turn 2"));
+    }
+
+    #[test]
+    fn test_turn_counter_shows_turn_5() {
+        let indicator = format_turn_indicator(5);
+        assert!(indicator.is_some());
+        let text = indicator.unwrap();
+        assert!(text.contains("turn 5"));
+    }
+
+    #[test]
+    fn test_turn_counter_zero_skipped() {
+        // Edge case: turn 0 should also be skipped
+        assert!(format_turn_indicator(0).is_none());
+    }
+
+    #[test]
+    fn test_turn_counter_increments_correctly() {
+        // Simulate the event loop logic
+        let mut turn_count: usize = 0;
+        let mut displayed = Vec::new();
+
+        for _ in 0..4 {
+            turn_count += 1;
+            if let Some(indicator) = format_turn_indicator(turn_count) {
+                displayed.push(indicator);
+            }
+        }
+
+        // Turn 1 skipped, turns 2-4 displayed
+        assert_eq!(displayed.len(), 3);
+        assert!(displayed[0].contains("turn 2"));
+        assert!(displayed[1].contains("turn 3"));
+        assert!(displayed[2].contains("turn 4"));
     }
 }
