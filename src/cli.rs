@@ -32,6 +32,7 @@ pub struct Config {
     pub verbose: bool,
     pub mcp_servers: Vec<String>,
     pub auto_approve: bool,
+    pub no_retry: bool,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -70,6 +71,7 @@ pub fn print_help() {
     println!("  --mcp <cmd>       Connect to an MCP server via stdio (repeatable)");
     println!("  --no-color        Disable colored output (also respects NO_COLOR env)");
     println!("  --verbose, -v     Show debug info (API errors, request details)");
+    println!("  --no-retry        Disable automatic retry on API errors (fail fast)");
     println!("  --yes, -y         Auto-approve all tool executions (skip confirmation prompts)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
@@ -170,6 +172,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--api-key",
     "--mcp",
     "--no-color",
+    "--no-retry",
     "--verbose",
     "-v",
     "--yes",
@@ -531,6 +534,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     let auto_approve = args.iter().any(|a| a == "--yes" || a == "-y");
 
+    let no_retry = args.iter().any(|a| a == "--no-retry");
+
     // --mcp <command> flags: collect all MCP server commands (repeatable)
     let mcp_servers: Vec<String> = args
         .iter()
@@ -554,6 +559,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         verbose,
         mcp_servers,
         auto_approve,
+        no_retry,
     })
 }
 
@@ -999,5 +1005,22 @@ thinking = "high"
         let content = "api_key = \"sk-ant-test-from-config\"";
         let config = parse_config_file(content);
         assert_eq!(config.get("api_key").unwrap(), "sk-ant-test-from-config");
+    }
+
+    #[test]
+    fn test_no_retry_flag_parsing() {
+        let args_with = ["yoyo".to_string(), "--no-retry".to_string()];
+        assert!(args_with.iter().any(|a| a == "--no-retry"));
+
+        let args_without = ["yoyo".to_string()];
+        assert!(!args_without.iter().any(|a| a == "--no-retry"));
+    }
+
+    #[test]
+    fn test_no_retry_flag_in_known_flags() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--no-retry"),
+            "--no-retry should be in KNOWN_FLAGS"
+        );
     }
 }

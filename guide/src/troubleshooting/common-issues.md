@@ -36,10 +36,12 @@ echo "" | yoyo
 This appears when the Anthropic API returns an error. Common causes:
 
 - **Invalid API key** — check your key is correct and active
-- **Rate limiting** — you're sending too many requests; wait and retry
+- **Rate limiting** — you're sending too many requests; yoyo automatically retries with exponential backoff (3 attempts, 1s→2s→4s delays)
 - **Model unavailable** — the model you specified doesn't exist or you don't have access
 
 Use `/retry` to re-send the last prompt after the issue is resolved.
+
+> **Tip:** If you want fail-fast behavior (no automatic retries), use the `--no-retry` flag.
 
 ## Context window full
 

@@ -33,6 +33,7 @@ use std::io::{self, BufRead, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig, ExecutionLimits};
 use yoagent::provider::AnthropicProvider;
+use yoagent::retry::RetryConfig;
 use yoagent::tools::bash::BashTool;
 use yoagent::tools::edit::EditFileTool;
 use yoagent::tools::file::{ReadFileTool, WriteFileTool};
@@ -85,14 +86,21 @@ fn build_agent(
     temperature: Option<f32>,
     max_turns: Option<usize>,
     auto_approve: bool,
+    no_retry: bool,
 ) -> Agent {
+    let retry_config = if no_retry {
+        RetryConfig::none()
+    } else {
+        RetryConfig::default()
+    };
     let mut agent = Agent::new(AnthropicProvider)
         .with_system_prompt(system_prompt)
         .with_model(model)
         .with_api_key(api_key)
         .with_thinking(thinking)
         .with_skills(skills.clone())
-        .with_tools(build_tools(auto_approve));
+        .with_tools(build_tools(auto_approve))
+        .with_retry_config(retry_config);
     if let Some(max) = max_tokens {
         agent = agent.with_max_tokens(max);
     }
@@ -140,6 +148,7 @@ async fn main() {
     // Auto-approve in non-interactive modes (piped, --prompt) or when --yes is set
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
     let auto_approve = config.auto_approve || !is_interactive;
+    let no_retry = config.no_retry;
 
     let mut agent = build_agent(
         &model,
@@ -151,6 +160,7 @@ async fn main() {
         temperature,
         max_turns,
         auto_approve,
+        no_retry,
     );
 
     // Connect to MCP servers (--mcp flags)
@@ -187,6 +197,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    no_retry,
                 );
                 eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
             }
@@ -256,6 +267,11 @@ async fn main() {
     }
     if is_verbose() {
         println!("{DIM}  verbose: on{RESET}");
+        if no_retry {
+            println!("{DIM}  retry: disabled (--no-retry){RESET}");
+        } else {
+            println!("{DIM}  retry: enabled (3 attempts, exponential backoff){RESET}");
+        }
     }
     if !auto_approve {
         println!("{DIM}  tools: confirmation required (use --yes to skip){RESET}");
@@ -438,6 +454,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    no_retry,
                 );
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
@@ -467,6 +484,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    no_retry,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -507,6 +525,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    no_retry,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -714,6 +733,14 @@ async fn main() {
                 if mcp_count > 0 {
                     println!("    mcp:        {mcp_count} server(s)");
                 }
+                println!(
+                    "    retry:      {}",
+                    if no_retry {
+                        "disabled"
+                    } else {
+                        "enabled (3 retries, backoff)"
+                    }
+                );
                 println!(
                     "    verbose:    {}",
                     if is_verbose() { "on" } else { "off" }
