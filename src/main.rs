@@ -22,10 +22,12 @@
 //!   /retry          Re-send the last user input
 
 mod cli;
+mod commands;
 mod format;
 mod prompt;
 
 use cli::*;
+use commands::*;
 use format::*;
 use prompt::*;
 
@@ -126,11 +128,11 @@ async fn main() {
         enable_verbose();
     }
 
-    let mut model = config.model;
+    let model = config.model;
     let api_key = config.api_key;
     let skills = config.skills;
     let system_prompt = config.system_prompt;
-    let mut thinking = config.thinking;
+    let thinking = config.thinking;
     let max_tokens = config.max_tokens;
     let temperature = config.temperature;
     let max_turns = config.max_turns;
@@ -267,8 +269,23 @@ async fn main() {
 
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
-    let mut session_total = Usage::default();
-    let mut last_input: Option<String> = None;
+
+    let mut state = ReplState {
+        model,
+        api_key,
+        skills,
+        system_prompt,
+        thinking,
+        max_tokens,
+        temperature,
+        max_turns,
+        auto_approve,
+        mcp_count,
+        cwd,
+        continue_session,
+        session_total: Usage::default(),
+        last_input: None,
+    };
 
     loop {
         let prompt = if let Some(branch) = git_branch() {
@@ -297,569 +314,33 @@ async fn main() {
         };
         let input = input.trim();
 
-        match input {
-            "/quit" | "/exit" => break,
-            "/help" => {
-                println!("{DIM}  /help              Show this help");
-                println!("  /quit, /exit       Exit yoyo");
-                println!("  /clear             Clear conversation history");
-                println!("  /compact           Compact conversation to save context space");
-                println!("  /config            Show all current settings");
-                println!("  /context           Show loaded project context files");
-                println!("  /cost              Show estimated session cost");
-                println!("  /init              Create a starter YOYO.md project context file");
-                println!("  /model <name>      Switch model (preserves conversation)");
-                println!(
-                    "  /think [level]     Show or change thinking level (off/low/medium/high)"
-                );
-                println!("  /status            Show session info");
-                println!("  /tokens            Show token usage and context window");
-                println!("  /save [path]       Save session to file (default: yoyo-session.json)");
-                println!("  /load [path]       Load session from file");
-                println!("  /diff              Show git diff summary of uncommitted changes");
-                println!("  /undo              Revert all uncommitted changes (git checkout)");
-                println!("  /health            Run health checks (build, test, clippy, fmt)");
-                println!("  /retry             Re-send the last user input");
-                println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
-                println!("  !<cmd>             Shortcut for /run");
-                println!("  /history           Show summary of conversation messages");
-                println!("  /version           Show yoyo version");
-                println!();
-                println!("  Multi-line input:");
-                println!("  End a line with \\ to continue on the next line");
-                println!("  Start with ``` to enter a fenced code block{RESET}\n");
-                continue;
+        // Handle /retry specially since it needs async
+        if input == "/retry" {
+            if let Some(prev) = state.last_input.clone() {
+                println!("{DIM}  (retrying last input){RESET}");
+                run_prompt(&mut agent, &prev, &mut state.session_total, &state.model).await;
+                auto_compact_if_needed(&mut agent);
+            } else {
+                eprintln!("{DIM}  (nothing to retry — no previous input){RESET}\n");
             }
-            "/version" => {
-                println!("{DIM}  yoyo v{VERSION}{RESET}\n");
-                continue;
-            }
-            "/status" => {
-                println!("{DIM}  model:   {model}");
-                if let Some(branch) = git_branch() {
-                    println!("  git:     {branch}");
-                }
-                println!("  cwd:     {cwd}");
-                println!(
-                    "  tokens:  {} in / {} out (session total){RESET}\n",
-                    session_total.input, session_total.output
-                );
-                continue;
-            }
-            "/tokens" => {
-                let max_context = MAX_CONTEXT_TOKENS;
-
-                // Estimate actual context window usage from message history
-                let messages = agent.messages().to_vec();
-                let context_used = total_tokens(&messages) as u64;
-                let bar = context_bar(context_used, max_context);
-
-                println!("{DIM}  Context window:");
-                println!("    messages:    {}", messages.len());
-                println!(
-                    "    context:     {} / {} tokens",
-                    format_token_count(context_used),
-                    format_token_count(max_context)
-                );
-                println!("    {bar}");
-                if context_used as f64 / max_context as f64 > 0.75 {
-                    println!(
-                        "    {YELLOW}⚠ Context is getting full. Consider /clear or /compact.{RESET}"
-                    );
-                }
-                println!();
-                println!("  Session totals:");
-                println!(
-                    "    input:       {} tokens",
-                    format_token_count(session_total.input)
-                );
-                println!(
-                    "    output:      {} tokens",
-                    format_token_count(session_total.output)
-                );
-                println!(
-                    "    cache read:  {} tokens",
-                    format_token_count(session_total.cache_read)
-                );
-                println!(
-                    "    cache write: {} tokens",
-                    format_token_count(session_total.cache_write)
-                );
-                if let Some(cost) = estimate_cost(&session_total, &model) {
-                    println!("    est. cost:   {}", format_cost(cost));
-                }
-                println!("{RESET}");
-                continue;
-            }
-            "/cost" => {
-                if let Some(cost) = estimate_cost(&session_total, &model) {
-                    println!("{DIM}  Session cost: {}", format_cost(cost));
-                    println!(
-                        "    {} in / {} out",
-                        format_token_count(session_total.input),
-                        format_token_count(session_total.output)
-                    );
-                    if session_total.cache_read > 0 || session_total.cache_write > 0 {
-                        println!(
-                            "    cache: {} read / {} write",
-                            format_token_count(session_total.cache_read),
-                            format_token_count(session_total.cache_write)
-                        );
-                    }
-                    // Show cost breakdown by category
-                    if let Some((input_cost, cw_cost, cr_cost, output_cost)) =
-                        cost_breakdown(&session_total, &model)
-                    {
-                        println!();
-                        println!("    Breakdown:");
-                        println!("      input:       {}", format_cost(input_cost));
-                        println!("      output:      {}", format_cost(output_cost));
-                        if cw_cost > 0.0 {
-                            println!("      cache write: {}", format_cost(cw_cost));
-                        }
-                        if cr_cost > 0.0 {
-                            println!("      cache read:  {}", format_cost(cr_cost));
-                        }
-                    }
-                    println!("{RESET}");
-                } else {
-                    println!("{DIM}  Cost estimation not available for model '{model}'.{RESET}\n");
-                }
-                continue;
-            }
-            "/clear" => {
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                );
-                println!("{DIM}  (conversation cleared){RESET}\n");
-                continue;
-            }
-            "/model" => {
-                println!("{DIM}  current model: {model}");
-                println!("  usage: /model <name>{RESET}\n");
-                continue;
-            }
-            s if s.starts_with("/model ") => {
-                let new_model = s.trim_start_matches("/model ").trim();
-                if new_model.is_empty() {
-                    println!("{DIM}  current model: {model}");
-                    println!("  usage: /model <name>{RESET}\n");
-                    continue;
-                }
-                model = new_model.to_string();
-                // Rebuild agent with new model, preserving conversation
-                let saved = agent.save_messages().ok();
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                );
-                if let Some(json) = saved {
-                    let _ = agent.restore_messages(&json);
-                }
-                println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
-                continue;
-            }
-            "/think" => {
-                let level_str = thinking_level_name(thinking);
-                println!("{DIM}  thinking: {level_str}");
-                println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
-                continue;
-            }
-            s if s.starts_with("/think ") => {
-                let level_str = s.trim_start_matches("/think ").trim();
-                if level_str.is_empty() {
-                    let current = thinking_level_name(thinking);
-                    println!("{DIM}  thinking: {current}");
-                    println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
-                    continue;
-                }
-                let new_thinking = parse_thinking_level(level_str);
-                if new_thinking == thinking {
-                    let current = thinking_level_name(thinking);
-                    println!("{DIM}  thinking already set to {current}{RESET}\n");
-                    continue;
-                }
-                thinking = new_thinking;
-                // Rebuild agent with new thinking level, preserving conversation
-                let saved = agent.save_messages().ok();
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                );
-                if let Some(json) = saved {
-                    let _ = agent.restore_messages(&json);
-                }
-                let level_name = thinking_level_name(thinking);
-                println!("{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n");
-                continue;
-            }
-            s if s == "/save" || s.starts_with("/save ") => {
-                let path = s.strip_prefix("/save").unwrap_or("").trim();
-                let path = if path.is_empty() {
-                    DEFAULT_SESSION_PATH
-                } else {
-                    path
-                };
-                match agent.save_messages() {
-                    Ok(json) => match std::fs::write(path, &json) {
-                        Ok(_) => println!(
-                            "{DIM}  (session saved to {path}, {} messages){RESET}\n",
-                            agent.messages().len()
-                        ),
-                        Err(e) => eprintln!("{RED}  error saving: {e}{RESET}\n"),
-                    },
-                    Err(e) => eprintln!("{RED}  error serializing: {e}{RESET}\n"),
-                }
-                continue;
-            }
-            s if s == "/load" || s.starts_with("/load ") => {
-                let path = s.strip_prefix("/load").unwrap_or("").trim();
-                let path = if path.is_empty() {
-                    DEFAULT_SESSION_PATH
-                } else {
-                    path
-                };
-                match std::fs::read_to_string(path) {
-                    Ok(json) => match agent.restore_messages(&json) {
-                        Ok(_) => println!(
-                            "{DIM}  (session loaded from {path}, {} messages){RESET}\n",
-                            agent.messages().len()
-                        ),
-                        Err(e) => eprintln!("{RED}  error parsing: {e}{RESET}\n"),
-                    },
-                    Err(e) => eprintln!("{RED}  error reading {path}: {e}{RESET}\n"),
-                }
-                continue;
-            }
-            "/diff" => {
-                // Use git status --short for a comprehensive view (modified, staged, untracked)
-                match std::process::Command::new("git")
-                    .args(["status", "--short"])
-                    .output()
-                {
-                    Ok(output) if output.status.success() => {
-                        let status = String::from_utf8_lossy(&output.stdout);
-                        if status.trim().is_empty() {
-                            println!("{DIM}  (no uncommitted changes){RESET}\n");
-                        } else {
-                            println!("{DIM}  Changes:");
-                            for line in status.lines() {
-                                println!("    {line}");
-                            }
-                            println!("{RESET}");
-                            // Also show diff stat for modified files
-                            if let Ok(diff) = std::process::Command::new("git")
-                                .args(["diff", "--stat"])
-                                .output()
-                            {
-                                let diff_text = String::from_utf8_lossy(&diff.stdout);
-                                if !diff_text.trim().is_empty() {
-                                    println!("{DIM}{diff_text}{RESET}");
-                                }
-                            }
-                        }
-                    }
-                    _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
-                }
-                continue;
-            }
-            "/undo" => {
-                // Revert all uncommitted changes and remove untracked files
-                let diff_output = std::process::Command::new("git")
-                    .args(["diff", "--stat"])
-                    .output();
-                let untracked = std::process::Command::new("git")
-                    .args(["ls-files", "--others", "--exclude-standard"])
-                    .output();
-
-                let has_diff = diff_output
-                    .as_ref()
-                    .map(|o| {
-                        o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
-                    })
-                    .unwrap_or(false);
-                let untracked_files: Vec<String> = untracked
-                    .as_ref()
-                    .map(|o| {
-                        String::from_utf8_lossy(&o.stdout)
-                            .lines()
-                            .map(|l| l.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let has_untracked = !untracked_files.is_empty();
-
-                if !has_diff && !has_untracked {
-                    println!("{DIM}  (nothing to undo — no uncommitted changes){RESET}\n");
-                } else {
-                    if has_diff {
-                        if let Ok(ref output) = diff_output {
-                            let diff = String::from_utf8_lossy(&output.stdout);
-                            println!("{DIM}{diff}{RESET}");
-                        }
-                    }
-                    if has_untracked {
-                        println!("{DIM}  untracked files:");
-                        for f in &untracked_files {
-                            println!("    {f}");
-                        }
-                        println!("{RESET}");
-                    }
-
-                    // Revert modified files
-                    if has_diff {
-                        let _ = std::process::Command::new("git")
-                            .args(["checkout", "--", "."])
-                            .output();
-                    }
-                    // Remove untracked files
-                    if has_untracked {
-                        let _ = std::process::Command::new("git")
-                            .args(["clean", "-fd"])
-                            .output();
-                    }
-                    println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
-                }
-                continue;
-            }
-            "/health" => {
-                println!("{DIM}  Running health checks...{RESET}");
-                let results = run_health_check();
-                let all_passed = results.iter().all(|(_, passed, _)| *passed);
-                for (name, passed, detail) in &results {
-                    let icon = if *passed {
-                        format!("{GREEN}✓{RESET}")
-                    } else {
-                        format!("{RED}✗{RESET}")
-                    };
-                    println!("  {icon} {name}: {detail}");
-                }
-                if all_passed {
-                    println!("\n{GREEN}  All checks passed ✓{RESET}\n");
-                } else {
-                    println!("\n{RED}  Some checks failed ✗{RESET}\n");
-                }
-                continue;
-            }
-            "/history" => {
-                let messages = agent.messages();
-                if messages.is_empty() {
-                    println!("{DIM}  (no messages in conversation){RESET}\n");
-                } else {
-                    println!("{DIM}  Conversation ({} messages):", messages.len());
-                    for (i, msg) in messages.iter().enumerate() {
-                        let (role, preview) = summarize_message(msg);
-                        let idx = i + 1;
-                        println!("    {idx:>3}. [{role}] {preview}");
-                    }
-                    println!("{RESET}");
-                }
-                continue;
-            }
-            "/config" => {
-                println!("{DIM}  Configuration:");
-                println!("    model:      {model}");
-                println!("    thinking:   {}", thinking_level_name(thinking));
-                println!(
-                    "    max_tokens: {}",
-                    max_tokens
-                        .map(|m| m.to_string())
-                        .unwrap_or_else(|| "default (8192)".to_string())
-                );
-                println!(
-                    "    max_turns:  {}",
-                    max_turns
-                        .map(|m| m.to_string())
-                        .unwrap_or_else(|| "default (50)".to_string())
-                );
-                println!(
-                    "    temperature: {}",
-                    temperature
-                        .map(|t| format!("{t:.1}"))
-                        .unwrap_or_else(|| "default".to_string())
-                );
-                println!(
-                    "    skills:     {}",
-                    if skills.is_empty() {
-                        "none".to_string()
-                    } else {
-                        format!("{} loaded", skills.len())
-                    }
-                );
-                let system_preview =
-                    truncate_with_ellipsis(system_prompt.lines().next().unwrap_or("(empty)"), 60);
-                println!("    system:     {system_preview}");
-                if mcp_count > 0 {
-                    println!("    mcp:        {mcp_count} server(s)");
-                }
-                println!(
-                    "    verbose:    {}",
-                    if is_verbose() { "on" } else { "off" }
-                );
-                if let Some(branch) = git_branch() {
-                    println!("    git:        {branch}");
-                }
-                println!("    cwd:        {cwd}");
-                println!(
-                    "    context:    {} max tokens",
-                    format_token_count(MAX_CONTEXT_TOKENS)
-                );
-                println!(
-                    "    auto-compact: at {:.0}%",
-                    AUTO_COMPACT_THRESHOLD * 100.0
-                );
-                println!("    messages:   {}", agent.messages().len());
-                if continue_session {
-                    println!("    session:    auto-save on exit ({DEFAULT_SESSION_PATH})");
-                }
-                println!("{RESET}");
-                continue;
-            }
-            "/compact" => {
-                let messages = agent.messages();
-                let before_count = messages.len();
-                let before_tokens = total_tokens(messages) as u64;
-                match compact_agent(&mut agent) {
-                    Some((_, _, after_count, after_tokens)) => {
-                        println!(
-                            "{DIM}  compacted: {before_count} → {after_count} messages, ~{} → ~{} tokens{RESET}\n",
-                            format_token_count(before_tokens),
-                            format_token_count(after_tokens)
-                        );
-                    }
-                    None => {
-                        println!(
-                            "{DIM}  (nothing to compact — {before_count} messages, ~{} tokens){RESET}\n",
-                            format_token_count(before_tokens)
-                        );
-                    }
-                }
-                continue;
-            }
-            "/context" => {
-                let files = cli::list_project_context_files();
-                if files.is_empty() {
-                    println!("{DIM}  No project context files found.");
-                    println!("  Searched for: {}", PROJECT_CONTEXT_FILES.join(", "));
-                    println!("  Create YOYO.md, CLAUDE.md, or .yoyo/instructions.md to add project context.");
-                    println!("  Or run /init to create a starter YOYO.md.{RESET}\n");
-                } else {
-                    println!("{DIM}  Project context files:");
-                    for (name, lines) in &files {
-                        println!("    {name} ({lines} lines)");
-                    }
-                    println!("{RESET}");
-                }
-                continue;
-            }
-            "/init" => {
-                let path = "YOYO.md";
-                if std::path::Path::new(path).exists() {
-                    println!("{DIM}  {path} already exists — not overwriting.{RESET}\n");
-                } else {
-                    let template = concat!(
-                        "# Project Context\n",
-                        "\n",
-                        "<!-- This file is read by yoyo at startup to understand your project. -->\n",
-                        "<!-- Customize it with project-specific instructions, conventions, and context. -->\n",
-                        "\n",
-                        "## About This Project\n",
-                        "\n",
-                        "<!-- Describe what this project does and its tech stack. -->\n",
-                        "\n",
-                        "## Coding Conventions\n",
-                        "\n",
-                        "<!-- List any coding standards, naming conventions, or patterns to follow. -->\n",
-                        "\n",
-                        "## Build & Test\n",
-                        "\n",
-                        "<!-- How to build, test, and run the project. -->\n",
-                        "\n",
-                        "## Important Files\n",
-                        "\n",
-                        "<!-- List key files and directories the agent should know about. -->\n",
-                    );
-                    match std::fs::write(path, template) {
-                        Ok(_) => println!(
-                            "{GREEN}  ✓ Created {path} — edit it to add project context.{RESET}\n"
-                        ),
-                        Err(e) => eprintln!("{RED}  error creating {path}: {e}{RESET}\n"),
-                    }
-                }
-                continue;
-            }
-            "/retry" => {
-                match &last_input {
-                    Some(prev) => {
-                        println!("{DIM}  (retrying last input){RESET}");
-                        let retry_input = prev.clone();
-                        run_prompt(&mut agent, &retry_input, &mut session_total, &model).await;
-                        auto_compact_if_needed(&mut agent);
-                    }
-                    None => {
-                        eprintln!("{DIM}  (nothing to retry — no previous input){RESET}\n");
-                    }
-                }
-                continue;
-            }
-            s if s.starts_with("/run ") || (s.starts_with('!') && s.len() > 1) => {
-                let cmd = if s.starts_with("/run ") {
-                    s.trim_start_matches("/run ").trim()
-                } else {
-                    s[1..].trim()
-                };
-                if cmd.is_empty() {
-                    println!("{DIM}  usage: /run <command>  or  !<command>{RESET}\n");
-                } else {
-                    run_shell_command(cmd);
-                }
-                continue;
-            }
-            "/run" => {
-                println!("{DIM}  usage: /run <command>  or  !<command>");
-                println!("  Runs a shell command directly (no AI, no tokens).{RESET}\n");
-                continue;
-            }
-            s if s.starts_with('/') && is_unknown_command(s) => {
-                let cmd = s.split_whitespace().next().unwrap_or(s);
-                eprintln!("{RED}  unknown command: {cmd}{RESET}");
-                eprintln!("{DIM}  type /help for available commands{RESET}\n");
-                continue;
-            }
-            _ => {}
+            continue;
         }
 
-        last_input = Some(input.to_string());
-        run_prompt(&mut agent, input, &mut session_total, &model).await;
+        match dispatch_command(input, &mut agent, &mut state) {
+            CommandResult::Quit => break,
+            CommandResult::Continue => continue,
+            CommandResult::NotACommand => {}
+        }
+
+        state.last_input = Some(input.to_string());
+        run_prompt(&mut agent, input, &mut state.session_total, &state.model).await;
 
         // Auto-compact when context window is getting full
         auto_compact_if_needed(&mut agent);
     }
 
     // Auto-save session on exit when --continue was used
-    if continue_session {
+    if state.continue_session {
         if let Ok(json) = agent.save_messages() {
             if std::fs::write(DEFAULT_SESSION_PATH, &json).is_ok() {
                 eprintln!(
