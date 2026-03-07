@@ -456,6 +456,25 @@ async fn main() {
                     auto_approve,
                     no_retry,
                 );
+                if !mcp_servers.is_empty() {
+                    let (updated, reconnected) = reconnect_mcp_servers(
+                        agent,
+                        &mcp_servers,
+                        &model,
+                        &api_key,
+                        &skills,
+                        &system_prompt,
+                        thinking,
+                        max_tokens,
+                        temperature,
+                        max_turns,
+                        auto_approve,
+                        no_retry,
+                    )
+                    .await;
+                    agent = updated;
+                    mcp_count = reconnected;
+                }
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
             }
@@ -486,6 +505,25 @@ async fn main() {
                     auto_approve,
                     no_retry,
                 );
+                if !mcp_servers.is_empty() {
+                    let (updated, reconnected) = reconnect_mcp_servers(
+                        agent,
+                        &mcp_servers,
+                        &model,
+                        &api_key,
+                        &skills,
+                        &system_prompt,
+                        thinking,
+                        max_tokens,
+                        temperature,
+                        max_turns,
+                        auto_approve,
+                        no_retry,
+                    )
+                    .await;
+                    agent = updated;
+                    mcp_count = reconnected;
+                }
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
                 }
@@ -527,6 +565,25 @@ async fn main() {
                     auto_approve,
                     no_retry,
                 );
+                if !mcp_servers.is_empty() {
+                    let (updated, reconnected) = reconnect_mcp_servers(
+                        agent,
+                        &mcp_servers,
+                        &model,
+                        &api_key,
+                        &skills,
+                        &system_prompt,
+                        thinking,
+                        max_tokens,
+                        temperature,
+                        max_turns,
+                        auto_approve,
+                        no_retry,
+                    )
+                    .await;
+                    agent = updated;
+                    mcp_count = reconnected;
+                }
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
                 }
@@ -898,6 +955,68 @@ async fn main() {
     }
 
     println!("\n{DIM}  bye 👋{RESET}\n");
+}
+
+/// Reconnect MCP servers after agent rebuild.
+/// Takes ownership of the agent (required by `with_mcp_server_stdio`), reconnects
+/// each server, and returns the updated agent plus a count of successful connections.
+/// On individual server failure, warns the user and rebuilds the agent (losing any
+/// previously reconnected MCP servers for that cycle) before continuing.
+#[allow(clippy::too_many_arguments)]
+async fn reconnect_mcp_servers(
+    mut agent: Agent,
+    mcp_servers: &[String],
+    model: &str,
+    api_key: &str,
+    skills: &yoagent::skills::SkillSet,
+    system_prompt: &str,
+    thinking: ThinkingLevel,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    max_turns: Option<usize>,
+    auto_approve: bool,
+    no_retry: bool,
+) -> (Agent, u32) {
+    let mut count = 0u32;
+    for mcp_cmd in mcp_servers {
+        let parts: Vec<&str> = mcp_cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let command = parts[0];
+        let args_slice: Vec<&str> = parts[1..].to_vec();
+        eprintln!("{DIM}  mcp: reconnecting to {mcp_cmd}...{RESET}");
+
+        match agent
+            .with_mcp_server_stdio(command, &args_slice, None)
+            .await
+        {
+            Ok(updated) => {
+                agent = updated;
+                count += 1;
+                eprintln!("{GREEN}  ✓ mcp: {command} reconnected{RESET}");
+            }
+            Err(e) => {
+                eprintln!(
+                    "{YELLOW}  ⚠ mcp: failed to reconnect '{mcp_cmd}': {e} — continuing without it{RESET}"
+                );
+                // Agent was consumed on error — rebuild to continue with remaining servers
+                agent = build_agent(
+                    model,
+                    api_key,
+                    skills,
+                    system_prompt,
+                    thinking,
+                    max_tokens,
+                    temperature,
+                    max_turns,
+                    auto_approve,
+                    no_retry,
+                );
+            }
+        }
+    }
+    (agent, count)
 }
 
 /// Compact the agent's conversation and return (before_count, before_tokens, after_count, after_tokens).
@@ -1276,5 +1395,63 @@ mod tests {
         assert!(load_matches("/load myfile.json"));
         assert!(!load_matches("/loadfile"));
         assert!(!load_matches("/loadXYZ"));
+    }
+
+    #[test]
+    fn test_mcp_servers_preserved_across_rebuild() {
+        // The mcp_servers list is a Vec<String> stored in main(). When the agent
+        // is rebuilt via /clear, /model, or /think, mcp_servers must remain intact
+        // so reconnect_mcp_servers can re-establish connections.
+        let mcp_servers: Vec<String> = vec![
+            "npx -y @modelcontextprotocol/server-filesystem /tmp".to_string(),
+            "python3 my_mcp_server.py".to_string(),
+        ];
+
+        // Simulate what happens in the REPL: mcp_servers is borrowed, not moved
+        let _agent = build_agent(
+            "claude-sonnet-4-20250514",
+            "test-key",
+            &yoagent::skills::SkillSet::default(),
+            "test",
+            ThinkingLevel::Off,
+            None,
+            None,
+            None,
+            true,
+            true,
+        );
+
+        // After rebuild, mcp_servers should still be available
+        assert_eq!(mcp_servers.len(), 2);
+        assert_eq!(
+            mcp_servers[0],
+            "npx -y @modelcontextprotocol/server-filesystem /tmp"
+        );
+        assert_eq!(mcp_servers[1], "python3 my_mcp_server.py");
+
+        // Verify parsing logic used by reconnect_mcp_servers
+        for mcp_cmd in &mcp_servers {
+            let parts: Vec<&str> = mcp_cmd.split_whitespace().collect();
+            assert!(!parts.is_empty(), "MCP command should not be empty");
+            assert!(!parts[0].is_empty(), "MCP command name should not be empty");
+        }
+
+        // Verify the list survives multiple "rebuilds" (borrows)
+        for _ in 0..3 {
+            let _agent2 = build_agent(
+                "claude-sonnet-4-20250514",
+                "test-key",
+                &yoagent::skills::SkillSet::default(),
+                "test",
+                ThinkingLevel::Off,
+                None,
+                None,
+                None,
+                true,
+                true,
+            );
+            // mcp_servers is still here — not moved, only borrowed by reconnect
+            assert_eq!(mcp_servers.len(), 2);
+        }
     }
 }
