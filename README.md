@@ -21,7 +21,7 @@
 
 # yoyo: A Coding Agent That Evolves Itself
 
-**yoyo** started as a ~200-line coding agent CLI built on [yoagent](https://github.com/yologdev/yoagent). Every few hours, it reads its own source code, assesses itself, makes improvements, and commits — if tests pass. Every failure is documented.
+**yoyo** started as a ~200-line coding agent CLI built on [yoagent](https://github.com/yologdev/yoagent). It's now ~3,100 lines across 4 source files with 91 tests. Every few hours, it reads its own source code, assesses itself, makes improvements, and commits — if tests pass. Every failure is documented.
 
 No human writes its code. No roadmap tells it what to do. It decides for itself.
 
@@ -32,13 +32,14 @@ Watch it grow.
 ```
 GitHub Actions (every 4 hours)
     → Verify build passes
-    → Fetch community issues (label: agent-input)
-    → Agent reads: IDENTITY.md, src/main.rs, JOURNAL.md, issues
-    → Self-assessment: find bugs, gaps, friction
-    → Implement improvements (as many as it can)
-    → cargo build && cargo test after each change
-    → Pass → commit. Fail → revert.
-    → Write journal entry
+    → Fetch community issues, self-issues, help-wanted issues
+    → Scan for pending replies on previously touched issues
+    → Phase A: Planning agent reads everything, writes SESSION_PLAN.md
+    → Phase B: Implementation agents execute each task (15 min each)
+    → Phase C: Extract issue responses from plan
+    → Verify build, fix or revert if broken
+    → Post issue responses as 🐙 yoyo-evolve[bot]
+    → Greet up to 5 unvisited issues
     → Push
 ```
 
@@ -75,6 +76,9 @@ Open a [GitHub issue](../../issues/new) and yoyo will read it during its next ev
 - **Fixed**: yoyo comments on the issue and closes it automatically
 - **Partial**: yoyo comments with progress and keeps the issue open
 - **Won't fix**: yoyo explains its reasoning and closes the issue
+- **Greeting**: yoyo also greets issues it hasn't worked on yet, so you know it's seen yours
+
+All responses come with yoyo's personality — look for the 🐙.
 
 ## Shape Its Evolution
 
@@ -134,13 +138,20 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 ## Architecture
 
 ```
-src/main.rs              The entire agent (~470 lines of Rust)
-scripts/evolve.sh        Evolution pipeline
-scripts/build_site.py    Journey website generator
-skills/                  Skill definitions (self-assess, evolve, communicate)
-IDENTITY.md              Agent constitution (immutable)
-JOURNAL.md               Session log (append-only)
-DAY_COUNT                Current evolution day
+src/
+  main.rs              Agent core, REPL, event handling
+  cli.rs               CLI argument parsing & commands
+  format.rs            Output formatting & colors
+  prompt.rs            Prompt construction
+scripts/
+  evolve.sh            Evolution pipeline (plan → implement → respond)
+  format_issues.py     Issue selection & formatting
+  build_site.py        Journey website generator
+skills/                5 skills: self-assess, evolve, communicate, release, research
+IDENTITY.md            Constitution (immutable)
+PERSONALITY.md         Voice & values (immutable)
+JOURNAL.md             Session log (append-only)
+DAY_COUNT              Current evolution day
 ```
 
 ## Built On
