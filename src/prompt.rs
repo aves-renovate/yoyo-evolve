@@ -39,6 +39,128 @@ pub fn write_output_file(path: &Option<String>, text: &str) {
     }
 }
 
+/// A search result from conversation history.
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    /// 1-based message index
+    pub index: usize,
+    /// Role: "user", "assistant", "tool", "ext"
+    pub role: &'static str,
+    /// Context window around the match (truncated)
+    pub excerpt: String,
+}
+
+/// Extract all searchable text from a message.
+pub fn extract_message_text(msg: &AgentMessage) -> String {
+    match msg {
+        AgentMessage::Llm(Message::User { content, .. }) => content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        AgentMessage::Llm(Message::Assistant { content, .. }) => content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                Content::ToolCall { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        AgentMessage::Llm(Message::ToolResult {
+            content, tool_name, ..
+        }) => {
+            let mut parts = vec![tool_name.as_str()];
+            for c in content {
+                if let Content::Text { text } = c {
+                    parts.push(text.as_str());
+                }
+            }
+            parts.join(" ")
+        }
+        AgentMessage::Extension(ext) => ext.role.clone(),
+    }
+}
+
+/// Get the role label for a message.
+fn message_role(msg: &AgentMessage) -> &'static str {
+    match msg {
+        AgentMessage::Llm(Message::User { .. }) => "user",
+        AgentMessage::Llm(Message::Assistant { .. }) => "assistant",
+        AgentMessage::Llm(Message::ToolResult { .. }) => "tool",
+        AgentMessage::Extension(_) => "ext",
+    }
+}
+
+/// Build an excerpt around the first match of `query_lower` in `text`.
+/// Shows up to `context_chars` characters around the match.
+fn build_excerpt(text: &str, query_lower: &str, context_chars: usize) -> String {
+    let text_lower = text.to_lowercase();
+    if let Some(pos) = text_lower.find(query_lower) {
+        let start = pos.saturating_sub(context_chars);
+        let end = (pos + query_lower.len() + context_chars).min(text.len());
+        // Adjust to char boundaries
+        let start = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= start)
+            .unwrap_or(0);
+        let end = text
+            .char_indices()
+            .map(|(i, c)| i + c.len_utf8())
+            .find(|&i| i >= end)
+            .unwrap_or(text.len());
+        let mut excerpt = String::new();
+        if start > 0 {
+            excerpt.push('…');
+        }
+        // Take the slice and collapse newlines to spaces
+        let slice = &text[start..end];
+        let collapsed: String = slice
+            .chars()
+            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+            .collect();
+        excerpt.push_str(collapsed.trim());
+        if end < text.len() {
+            excerpt.push('…');
+        }
+        excerpt
+    } else {
+        String::new()
+    }
+}
+
+/// Search conversation messages for a query string (case-insensitive).
+/// Returns up to `max_results` matches with message index, role, and excerpt.
+pub fn search_messages(
+    messages: &[AgentMessage],
+    query: &str,
+    max_results: usize,
+) -> Vec<SearchResult> {
+    let query_lower = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for (i, msg) in messages.iter().enumerate() {
+        let text = extract_message_text(msg);
+        if text.to_lowercase().contains(&query_lower) {
+            let excerpt = build_excerpt(&text, &query_lower, 40);
+            results.push(SearchResult {
+                index: i + 1,
+                role: message_role(msg),
+                excerpt,
+            });
+            if results.len() >= max_results {
+                break;
+            }
+        }
+    }
+
+    results
+}
+
 /// Summarize a message for /history display.
 pub fn summarize_message(msg: &AgentMessage) -> (&str, String) {
     match msg {
@@ -348,5 +470,115 @@ mod tests {
             details: serde_json::json!(null),
         };
         assert_eq!(tool_result_preview(&result, 100), "first line");
+    }
+
+    #[test]
+    fn test_search_messages_basic() {
+        let messages = vec![
+            AgentMessage::Llm(Message::user("hello world")),
+            AgentMessage::Llm(Message::user("goodbye world")),
+            AgentMessage::Llm(Message::user("hello again")),
+        ];
+        let results = search_messages(&messages, "hello", 10);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].index, 1);
+        assert_eq!(results[0].role, "user");
+        assert!(results[0].excerpt.contains("hello"));
+        assert_eq!(results[1].index, 3);
+    }
+
+    #[test]
+    fn test_search_messages_case_insensitive() {
+        let messages = vec![
+            AgentMessage::Llm(Message::user("Hello World")),
+            AgentMessage::Llm(Message::user("HELLO AGAIN")),
+        ];
+        let results = search_messages(&messages, "hello", 10);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_search_messages_no_match() {
+        let messages = vec![AgentMessage::Llm(Message::user("hello world"))];
+        let results = search_messages(&messages, "xyz", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_messages_max_results() {
+        let messages: Vec<AgentMessage> = (0..20)
+            .map(|i| AgentMessage::Llm(Message::user(format!("message {i} with keyword"))))
+            .collect();
+        let results = search_messages(&messages, "keyword", 5);
+        assert_eq!(results.len(), 5);
+    }
+
+    #[test]
+    fn test_search_messages_empty() {
+        let results = search_messages(&[], "test", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_messages_tool_result() {
+        let messages = vec![AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "tc_1".into(),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "error: file not found".into(),
+            }],
+            is_error: true,
+            timestamp: 0,
+        })];
+        let results = search_messages(&messages, "file not found", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].role, "tool");
+        assert!(results[0].excerpt.contains("file not found"));
+    }
+
+    #[test]
+    fn test_extract_message_text_user() {
+        let msg = AgentMessage::Llm(Message::user("test content"));
+        let text = extract_message_text(&msg);
+        assert_eq!(text, "test content");
+    }
+
+    #[test]
+    fn test_extract_message_text_tool_result() {
+        let msg = AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "tc_1".into(),
+            tool_name: "read_file".into(),
+            content: vec![Content::Text {
+                text: "file contents here".into(),
+            }],
+            is_error: false,
+            timestamp: 0,
+        });
+        let text = extract_message_text(&msg);
+        assert!(text.contains("read_file"));
+        assert!(text.contains("file contents here"));
+    }
+
+    #[test]
+    fn test_build_excerpt_basic() {
+        let text = "The quick brown fox jumps over the lazy dog";
+        let excerpt = build_excerpt(text, "fox", 10);
+        assert!(excerpt.contains("fox"));
+        // Should have ellipsis since match is in the middle
+        assert!(excerpt.contains("…"));
+    }
+
+    #[test]
+    fn test_build_excerpt_at_start() {
+        let text = "hello world test";
+        let excerpt = build_excerpt(text, "hello", 40);
+        assert!(excerpt.starts_with("hello"));
+    }
+
+    #[test]
+    fn test_build_excerpt_no_match() {
+        let text = "hello world";
+        let excerpt = build_excerpt(text, "xyz", 40);
+        assert!(excerpt.is_empty());
     }
 }

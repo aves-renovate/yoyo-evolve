@@ -85,6 +85,7 @@ pub fn print_help() {
     println!("  /diff             Show git diff summary of uncommitted changes");
     println!("  /health           Run health checks (build, test, clippy, fmt)");
     println!("  /history          Show summary of conversation messages");
+    println!("  /search <query>   Search conversation history for a text pattern");
     println!("  /init             Create a starter YOYO.md project context file");
     println!("  /load [path]      Load session from file");
     println!("  /model <name>     Switch model mid-session");

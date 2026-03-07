@@ -17,6 +17,7 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 | `/compact` | Compress conversation to save context space (see [Context Management](../features/context.md)) |
 | `/retry` | Re-send your last input — useful when a response gets cut off or you want to try again |
 | `/history` | Show a summary of all messages in the conversation |
+| `/search <query>` | Search conversation history for a text pattern — shows up to 10 matches with message index, role, and excerpt |
 
 ## Model & Thinking
 

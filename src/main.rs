@@ -20,6 +20,7 @@
 //!   /clear          Clear conversation history
 //!   /model <name>   Switch model mid-session
 //!   /retry          Re-send the last user input
+//!   /search <query> Search conversation history
 
 mod cli;
 mod commands;
@@ -535,7 +536,7 @@ fn run_health_check() -> Vec<(&'static str, bool, String)> {
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/cost", "/status", "/tokens", "/save",
     "/load", "/diff", "/undo", "/health", "/retry", "/history", "/model", "/think", "/config",
-    "/context", "/init", "/version", "/run",
+    "/context", "/init", "/version", "/run", "/search",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -580,7 +581,7 @@ mod tests {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/init",
             "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/run",
-            "/history", "/model", "/think", "/version",
+            "/history", "/model", "/think", "/version", "/search",
         ];
         for cmd in &commands {
             assert!(
@@ -642,6 +643,8 @@ mod tests {
         assert!(!is_unknown_command("/config"));
         assert!(!is_unknown_command("/context"));
         assert!(!is_unknown_command("/version"));
+        assert!(!is_unknown_command("/search"));
+        assert!(!is_unknown_command("/search hello world"));
     }
 
     #[test]

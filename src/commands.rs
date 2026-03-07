@@ -92,6 +92,7 @@ pub fn cmd_help() {
     println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
     println!("  !<cmd>             Shortcut for /run");
     println!("  /history           Show summary of conversation messages");
+    println!("  /search <query>    Search conversation history for a text pattern");
     println!("  /version           Show yoyo version");
     println!();
     println!("  Multi-line input:");
@@ -403,6 +404,40 @@ pub fn cmd_history(agent: &Agent) {
     }
 }
 
+pub fn cmd_search(query: &str, agent: &Agent) {
+    use crate::prompt::search_messages;
+
+    if query.is_empty() {
+        println!("{DIM}  usage: /search <query>");
+        println!("  Search conversation history for a text pattern.{RESET}\n");
+        return;
+    }
+
+    let messages = agent.messages();
+    if messages.is_empty() {
+        println!("{DIM}  (no messages to search){RESET}\n");
+        return;
+    }
+
+    let results = search_messages(messages, query, 10);
+    if results.is_empty() {
+        println!("{DIM}  no matches for \"{query}\"{RESET}\n");
+    } else {
+        println!(
+            "{DIM}  {} match{} for \"{query}\":",
+            results.len(),
+            if results.len() == 1 { "" } else { "es" }
+        );
+        for r in &results {
+            println!("    {:>3}. [{}] {}", r.index, r.role, r.excerpt);
+        }
+        if results.len() == 10 {
+            println!("    (showing first 10 matches)");
+        }
+        println!("{RESET}");
+    }
+}
+
 pub fn cmd_config(agent: &Agent, state: &ReplState) {
     println!("{DIM}  Configuration:");
     println!("    model:      {}", state.model);
@@ -630,6 +665,15 @@ pub fn dispatch_command(input: &str, agent: &mut Agent, state: &mut ReplState) -
             cmd_history(agent);
             CommandResult::Continue
         }
+        "/search" => {
+            cmd_search("", agent);
+            CommandResult::Continue
+        }
+        s if s.starts_with("/search ") => {
+            let query = s.trim_start_matches("/search ").trim();
+            cmd_search(query, agent);
+            CommandResult::Continue
+        }
         "/config" => {
             cmd_config(agent, state);
             CommandResult::Continue
@@ -730,6 +774,14 @@ mod tests {
             categorize_command("/model claude-opus-4-6"),
             CommandCategory::NeedsState
         ));
+        assert!(matches!(
+            categorize_command("/search"),
+            CommandCategory::NeedsState
+        ));
+        assert!(matches!(
+            categorize_command("/search hello"),
+            CommandCategory::NeedsState
+        ));
     }
 
     #[test]
@@ -786,11 +838,12 @@ mod tests {
                 CommandCategory::Simple
             }
             "/status" | "/tokens" | "/cost" | "/clear" | "/model" | "/think" | "/config"
-            | "/compact" | "/history" => CommandCategory::NeedsState,
+            | "/compact" | "/history" | "/search" => CommandCategory::NeedsState,
             s if s.starts_with("/model ") => CommandCategory::NeedsState,
             s if s.starts_with("/think ") => CommandCategory::NeedsState,
             s if s == "/save" || s.starts_with("/save ") => CommandCategory::NeedsState,
             s if s == "/load" || s.starts_with("/load ") => CommandCategory::NeedsState,
+            s if s.starts_with("/search ") => CommandCategory::NeedsState,
             "/retry" => CommandCategory::NeedsState,
             "/run" => CommandCategory::Simple,
             s if s.starts_with("/run ") || (s.starts_with('!') && s.len() > 1) => {
