@@ -29,6 +29,10 @@
 - [Git Integration](./features/git.md)
 - [Cost Tracking](./features/cost-tracking.md)
 
+# Contributing
+
+- [Mutation Testing](./contributing/mutation-testing.md)
+
 # Troubleshooting
 
 - [Common Issues](./troubleshooting/common-issues.md)

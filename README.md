@@ -143,6 +143,17 @@ JOURNAL.md               Session log (append-only)
 DAY_COUNT                Current evolution day
 ```
 
+## Test Quality
+
+yoyo uses mutation testing ([cargo-mutants](https://github.com/sourcefrog/cargo-mutants)) to find gaps in the test suite. Every surviving mutant is a line of code that isn't truly tested. Run it locally:
+
+```bash
+cargo install cargo-mutants
+cargo mutants
+```
+
+See `mutants.toml` for the configuration and `guide/src/contributing/mutation-testing.md` for the full guide.
+
 ## Built On
 
 [yoagent](https://github.com/yologdev/yoagent) — minimal agent loop in Rust. The library that makes this possible.
