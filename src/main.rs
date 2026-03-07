@@ -320,6 +320,7 @@ async fn main() {
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!("  /health            Run health checks (build, test, clippy, fmt)");
                 println!("  /retry             Re-send the last user input");
+                println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
                 println!("  /history           Show summary of conversation messages");
                 println!("  /version           Show yoyo version");
                 println!();
@@ -822,6 +823,20 @@ async fn main() {
                 }
                 continue;
             }
+            s if s.starts_with("/run ") => {
+                let cmd = s.trim_start_matches("/run ").trim();
+                if cmd.is_empty() {
+                    println!("{DIM}  usage: /run <command>{RESET}\n");
+                } else {
+                    run_shell_command(cmd);
+                }
+                continue;
+            }
+            "/run" => {
+                println!("{DIM}  usage: /run <command>");
+                println!("  Runs a shell command directly (no AI, no tokens).{RESET}\n");
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
@@ -885,6 +900,36 @@ fn auto_compact_if_needed(agent: &mut Agent) {
                 format_token_count(before_tokens),
                 format_token_count(after_tokens)
             );
+        }
+    }
+}
+
+/// Run a shell command directly and print its output.
+/// Used by the /run command to execute without going through the AI.
+fn run_shell_command(cmd: &str) {
+    let start = std::time::Instant::now();
+    let output = std::process::Command::new("sh").args(["-c", cmd]).output();
+    let elapsed = format_duration(start.elapsed());
+
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            if !stdout.is_empty() {
+                print!("{stdout}");
+            }
+            if !stderr.is_empty() {
+                eprint!("{RED}{stderr}{RESET}");
+            }
+            let code = o.status.code().unwrap_or(-1);
+            if code == 0 {
+                println!("{DIM}  ✓ exit {code} ({elapsed}){RESET}\n");
+            } else {
+                println!("{RED}  ✗ exit {code} ({elapsed}){RESET}\n");
+            }
+        }
+        Err(e) => {
+            eprintln!("{RED}  error running command: {e}{RESET}\n");
         }
     }
 }
@@ -1003,7 +1048,7 @@ fn run_health_check() -> Vec<(&'static str, bool, String)> {
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/cost", "/status", "/tokens", "/save",
     "/load", "/diff", "/undo", "/health", "/retry", "/history", "/model", "/think", "/config",
-    "/context", "/init", "/version",
+    "/context", "/init", "/version", "/run",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -1047,7 +1092,7 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/init",
-            "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry",
+            "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/run",
             "/history", "/model", "/think", "/version",
         ];
         for cmd in &commands {
@@ -1136,6 +1181,36 @@ mod tests {
                 assert!(passed, "cargo build should pass in test environment");
             }
         }
+    }
+
+    #[test]
+    fn test_run_command_recognized() {
+        assert!(!is_unknown_command("/run"));
+        assert!(!is_unknown_command("/run echo hello"));
+        assert!(!is_unknown_command("/run ls -la"));
+    }
+
+    #[test]
+    fn test_run_shell_command_basic() {
+        // Verify run_shell_command doesn't panic on basic commands
+        // (output goes to stdout/stderr, we just check it doesn't crash)
+        run_shell_command("echo hello");
+    }
+
+    #[test]
+    fn test_run_shell_command_failing() {
+        // Non-zero exit should not panic
+        run_shell_command("false");
+    }
+
+    #[test]
+    fn test_run_command_matching() {
+        // /run should only match /run or /run <cmd>, not /running
+        let run_matches = |s: &str| s == "/run" || s.starts_with("/run ");
+        assert!(run_matches("/run"));
+        assert!(run_matches("/run echo hello"));
+        assert!(!run_matches("/running"));
+        assert!(!run_matches("/runaway"));
     }
 
     #[test]

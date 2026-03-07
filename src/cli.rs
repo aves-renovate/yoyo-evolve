@@ -89,6 +89,7 @@ pub fn print_help() {
     println!("  /load [path]      Load session from file");
     println!("  /model <name>     Switch model mid-session");
     println!("  /retry            Re-send the last user input");
+    println!("  /run <cmd>        Run a shell command directly (no AI, no tokens)");
     println!("  /save [path]      Save session to file");
     println!("  /status           Show session info");
     println!("  /think [level]    Show or change thinking level (off/low/medium/high)");

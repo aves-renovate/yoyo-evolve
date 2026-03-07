@@ -62,6 +62,20 @@ The `/tokens` command shows a visual progress bar of your context window:
     █████████░░░░░░░░░░░ 23%
 ```
 
+## Shell
+
+| Command | Description |
+|---------|-------------|
+| `/run <cmd>` | Run a shell command directly — no AI, no tokens used |
+
+The `/run` command lets you execute shell commands without going through the AI model. Useful for quick checks (e.g., `/run git log --oneline -5`) without burning API tokens.
+
+```
+/run ls -la src/
+/run cargo test
+/run git status
+```
+
 ## Git
 
 | Command | Description |
