@@ -31,6 +31,7 @@ pub struct Config {
     pub prompt_arg: Option<String>,
     pub verbose: bool,
     pub mcp_servers: Vec<String>,
+    pub mcp_http_servers: Vec<String>,
     pub auto_approve: bool,
     pub no_retry: bool,
 }
@@ -69,6 +70,7 @@ pub fn print_help() {
     println!("  --output, -o <f>  Write final response text to a file");
     println!("  --api-key <key>   API key (overrides ANTHROPIC_API_KEY env var)");
     println!("  --mcp <cmd>       Connect to an MCP server via stdio (repeatable)");
+    println!("  --mcp-http <url>  Connect to an MCP server via HTTP/SSE (repeatable)");
     println!("  --no-color        Disable colored output (also respects NO_COLOR env)");
     println!("  --verbose, -v     Show debug info (API errors, request details)");
     println!("  --no-retry        Disable automatic retry on API errors (fail fast)");
@@ -171,6 +173,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "-o",
     "--api-key",
     "--mcp",
+    "--mcp-http",
     "--no-color",
     "--no-retry",
     "--verbose",
@@ -348,6 +351,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "-o",
         "--api-key",
         "--mcp",
+        "--mcp-http",
     ];
     for flag in &flags_needing_values {
         if let Some(pos) = args.iter().position(|a| a == flag) {
@@ -544,6 +548,14 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .filter_map(|(i, _)| args.get(i + 1).cloned())
         .collect();
 
+    // --mcp-http <url> flags: collect all HTTP/SSE MCP server URLs (repeatable)
+    let mcp_http_servers: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == "--mcp-http")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+
     Some(Config {
         model,
         api_key,
@@ -558,6 +570,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         prompt_arg,
         verbose,
         mcp_servers,
+        mcp_http_servers,
         auto_approve,
         no_retry,
     })
@@ -1022,5 +1035,87 @@ thinking = "high"
             KNOWN_FLAGS.contains(&"--no-retry"),
             "--no-retry should be in KNOWN_FLAGS"
         );
+    }
+
+    #[test]
+    fn test_mcp_http_flag_in_known_flags() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--mcp-http"),
+            "--mcp-http should be in KNOWN_FLAGS"
+        );
+    }
+
+    #[test]
+    fn test_mcp_http_flag_parsing() {
+        let args = [
+            "yoyo".to_string(),
+            "--mcp-http".to_string(),
+            "http://localhost:8080/mcp".to_string(),
+        ];
+        let urls: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--mcp-http")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        assert_eq!(urls, vec!["http://localhost:8080/mcp"]);
+    }
+
+    #[test]
+    fn test_mcp_http_flag_multiple() {
+        let args = [
+            "yoyo".to_string(),
+            "--mcp-http".to_string(),
+            "http://localhost:8080/mcp".to_string(),
+            "--mcp-http".to_string(),
+            "https://remote.example.com/mcp".to_string(),
+        ];
+        let urls: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--mcp-http")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0], "http://localhost:8080/mcp");
+        assert_eq!(urls[1], "https://remote.example.com/mcp");
+    }
+
+    #[test]
+    fn test_mcp_http_flag_missing() {
+        let args = ["yoyo".to_string()];
+        let urls: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--mcp-http")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn test_mcp_and_mcp_http_together() {
+        // Both --mcp (stdio) and --mcp-http (HTTP) can be used together
+        let args = [
+            "yoyo".to_string(),
+            "--mcp".to_string(),
+            "npx server".to_string(),
+            "--mcp-http".to_string(),
+            "http://localhost:9090/mcp".to_string(),
+        ];
+        let stdio_servers: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--mcp")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        let http_servers: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--mcp-http")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        assert_eq!(stdio_servers, vec!["npx server"]);
+        assert_eq!(http_servers, vec!["http://localhost:9090/mcp"]);
     }
 }

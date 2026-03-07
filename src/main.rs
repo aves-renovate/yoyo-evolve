@@ -145,6 +145,7 @@ async fn main() {
     let continue_session = config.continue_session;
     let output_path = config.output_path;
     let mcp_servers = config.mcp_servers;
+    let mcp_http_servers = config.mcp_http_servers;
     // Auto-approve in non-interactive modes (piped, --prompt) or when --yes is set
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
     let auto_approve = config.auto_approve || !is_interactive;
@@ -187,6 +188,39 @@ async fn main() {
             Err(e) => {
                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
                 // Agent was consumed on error — rebuild it with previous MCP connections lost
+                agent = build_agent(
+                    &model,
+                    &api_key,
+                    &skills,
+                    &system_prompt,
+                    thinking,
+                    max_tokens,
+                    temperature,
+                    max_turns,
+                    auto_approve,
+                    no_retry,
+                );
+                eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
+            }
+        }
+    }
+
+    // Connect to HTTP/SSE MCP servers (--mcp-http flags)
+    for mcp_url in &mcp_http_servers {
+        if mcp_url.is_empty() {
+            eprintln!("{YELLOW}warning:{RESET} Empty --mcp-http URL, skipping");
+            continue;
+        }
+        eprintln!("{DIM}  mcp: connecting to {mcp_url} (HTTP)...{RESET}");
+        let result = agent.with_mcp_server_http(mcp_url).await;
+        match result {
+            Ok(updated) => {
+                agent = updated;
+                mcp_count += 1;
+                eprintln!("{GREEN}  ✓ mcp: {mcp_url} connected (HTTP){RESET}");
+            }
+            Err(e) => {
+                eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_url}' (HTTP): {e}{RESET}");
                 agent = build_agent(
                     &model,
                     &api_key,
@@ -456,10 +490,11 @@ async fn main() {
                     auto_approve,
                     no_retry,
                 );
-                if !mcp_servers.is_empty() {
+                if !mcp_servers.is_empty() || !mcp_http_servers.is_empty() {
                     let (updated, reconnected) = reconnect_mcp_servers(
                         agent,
                         &mcp_servers,
+                        &mcp_http_servers,
                         &model,
                         &api_key,
                         &skills,
@@ -505,10 +540,11 @@ async fn main() {
                     auto_approve,
                     no_retry,
                 );
-                if !mcp_servers.is_empty() {
+                if !mcp_servers.is_empty() || !mcp_http_servers.is_empty() {
                     let (updated, reconnected) = reconnect_mcp_servers(
                         agent,
                         &mcp_servers,
+                        &mcp_http_servers,
                         &model,
                         &api_key,
                         &skills,
@@ -565,10 +601,11 @@ async fn main() {
                     auto_approve,
                     no_retry,
                 );
-                if !mcp_servers.is_empty() {
+                if !mcp_servers.is_empty() || !mcp_http_servers.is_empty() {
                     let (updated, reconnected) = reconnect_mcp_servers(
                         agent,
                         &mcp_servers,
+                        &mcp_http_servers,
                         &model,
                         &api_key,
                         &skills,
@@ -966,6 +1003,7 @@ async fn main() {
 async fn reconnect_mcp_servers(
     mut agent: Agent,
     mcp_servers: &[String],
+    mcp_http_servers: &[String],
     model: &str,
     api_key: &str,
     skills: &yoagent::skills::SkillSet,
@@ -1001,6 +1039,37 @@ async fn reconnect_mcp_servers(
                     "{YELLOW}  ⚠ mcp: failed to reconnect '{mcp_cmd}': {e} — continuing without it{RESET}"
                 );
                 // Agent was consumed on error — rebuild to continue with remaining servers
+                agent = build_agent(
+                    model,
+                    api_key,
+                    skills,
+                    system_prompt,
+                    thinking,
+                    max_tokens,
+                    temperature,
+                    max_turns,
+                    auto_approve,
+                    no_retry,
+                );
+            }
+        }
+    }
+    // Reconnect HTTP/SSE MCP servers
+    for mcp_url in mcp_http_servers {
+        if mcp_url.is_empty() {
+            continue;
+        }
+        eprintln!("{DIM}  mcp: reconnecting to {mcp_url} (HTTP)...{RESET}");
+        match agent.with_mcp_server_http(mcp_url).await {
+            Ok(updated) => {
+                agent = updated;
+                count += 1;
+                eprintln!("{GREEN}  ✓ mcp: {mcp_url} reconnected (HTTP){RESET}");
+            }
+            Err(e) => {
+                eprintln!(
+                    "{YELLOW}  ⚠ mcp: failed to reconnect '{mcp_url}' (HTTP): {e} — continuing without it{RESET}"
+                );
                 agent = build_agent(
                     model,
                     api_key,
@@ -1406,6 +1475,10 @@ mod tests {
             "npx -y @modelcontextprotocol/server-filesystem /tmp".to_string(),
             "python3 my_mcp_server.py".to_string(),
         ];
+        let mcp_http_servers: Vec<String> = vec![
+            "http://localhost:8080/mcp".to_string(),
+            "https://remote.example.com/mcp".to_string(),
+        ];
 
         // Simulate what happens in the REPL: mcp_servers is borrowed, not moved
         let _agent = build_agent(
@@ -1429,6 +1502,11 @@ mod tests {
         );
         assert_eq!(mcp_servers[1], "python3 my_mcp_server.py");
 
+        // After rebuild, mcp_http_servers should still be available
+        assert_eq!(mcp_http_servers.len(), 2);
+        assert_eq!(mcp_http_servers[0], "http://localhost:8080/mcp");
+        assert_eq!(mcp_http_servers[1], "https://remote.example.com/mcp");
+
         // Verify parsing logic used by reconnect_mcp_servers
         for mcp_cmd in &mcp_servers {
             let parts: Vec<&str> = mcp_cmd.split_whitespace().collect();
@@ -1436,7 +1514,12 @@ mod tests {
             assert!(!parts[0].is_empty(), "MCP command name should not be empty");
         }
 
-        // Verify the list survives multiple "rebuilds" (borrows)
+        // Verify HTTP URLs are non-empty
+        for mcp_url in &mcp_http_servers {
+            assert!(!mcp_url.is_empty(), "MCP HTTP URL should not be empty");
+        }
+
+        // Verify the lists survive multiple "rebuilds" (borrows)
         for _ in 0..3 {
             let _agent2 = build_agent(
                 "claude-sonnet-4-20250514",
@@ -1450,8 +1533,9 @@ mod tests {
                 true,
                 true,
             );
-            // mcp_servers is still here — not moved, only borrowed by reconnect
+            // Both lists are still here — not moved, only borrowed by reconnect
             assert_eq!(mcp_servers.len(), 2);
+            assert_eq!(mcp_http_servers.len(), 2);
         }
     }
 }
