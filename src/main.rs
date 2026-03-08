@@ -32,8 +32,13 @@ use cli::*;
 use format::*;
 use prompt::*;
 
+use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
+use rustyline::Editor;
 use std::io::{self, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig, ExecutionLimits};
@@ -45,6 +50,42 @@ use yoagent::tools::list::ListFilesTool;
 use yoagent::tools::search::SearchTool;
 use yoagent::types::AgentTool;
 use yoagent::*;
+
+/// Rustyline helper that provides tab-completion for `/` slash commands.
+struct YoyoHelper;
+
+impl Completer for YoyoHelper {
+    type Candidate = String;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        // Only complete if the line starts with '/' and cursor is in the command word
+        let prefix = &line[..pos];
+        if !prefix.starts_with('/') || prefix.contains(' ') {
+            return Ok((0, Vec::new()));
+        }
+        let matches: Vec<String> = KNOWN_COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(prefix))
+            .map(|cmd| cmd.to_string())
+            .collect();
+        Ok((0, matches))
+    }
+}
+
+impl Hinter for YoyoHelper {
+    type Hint = String;
+}
+
+impl Highlighter for YoyoHelper {}
+
+impl Validator for YoyoHelper {}
+
+impl rustyline::Helper for YoyoHelper {}
 
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands require user approval.
@@ -270,8 +311,9 @@ async fn main() {
     }
     println!("{DIM}  cwd:   {cwd}{RESET}\n");
 
-    // Set up rustyline editor for interactive REPL
-    let mut rl = DefaultEditor::new().expect("Failed to initialize readline");
+    // Set up rustyline editor with slash-command tab-completion
+    let mut rl = Editor::new().expect("Failed to initialize readline");
+    rl.set_helper(Some(YoyoHelper));
     if let Some(history_path) = history_file_path() {
         if rl.load_history(&history_path).is_err() {
             // First run or history file doesn't exist yet — that's fine
@@ -1086,7 +1128,7 @@ fn needs_continuation(line: &str) -> bool {
 
 /// Collect multi-line input using rustyline (for interactive REPL mode).
 /// Same logic as `collect_multiline` but uses rustyline's readline for continuation prompts.
-fn collect_multiline_rl(first_line: &str, rl: &mut DefaultEditor) -> String {
+fn collect_multiline_rl(first_line: &str, rl: &mut Editor<YoyoHelper, DefaultHistory>) -> String {
     let mut buf = String::new();
     let cont_prompt = format!("{DIM}  ...{RESET} ");
 
@@ -1573,6 +1615,36 @@ mod tests {
         let input_bare = "/pr";
         let arg_bare = input_bare.strip_prefix("/pr").unwrap_or("").trim();
         assert!(arg_bare.is_empty());
+    }
+
+    #[test]
+    fn test_yoyo_helper_completes_slash_commands() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // Typing "/" should suggest all commands
+        let (start, candidates) = helper.complete("/", 1, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert!(!candidates.is_empty());
+        assert!(candidates.contains(&"/help".to_string()));
+        assert!(candidates.contains(&"/quit".to_string()));
+
+        // Typing "/he" should suggest "/help" and "/health"
+        let (start, candidates) = helper.complete("/he", 3, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert!(candidates.contains(&"/help".to_string()));
+        assert!(candidates.contains(&"/health".to_string()));
+        assert!(!candidates.contains(&"/quit".to_string()));
+
+        // Typing "/model " (with space) should return no completions
+        let (_, candidates) = helper.complete("/model claude", 13, &ctx).unwrap();
+        assert!(candidates.is_empty());
+
+        // Regular text (no slash) should return no completions
+        let (_, candidates) = helper.complete("hello", 5, &ctx).unwrap();
+        assert!(candidates.is_empty());
     }
 
     #[test]
