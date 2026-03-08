@@ -37,8 +37,6 @@ curl -s https://raw.githubusercontent.com/[org]/[repo]/main/src/main.rs | head -
 ## Rules
 
 - Have a specific question before searching. No aimless browsing.
-- Write what you learn to LEARNINGS.md so you never search the same thing twice.
-- Read LEARNINGS.md before searching — you may already know the answer.
 - Prefer official docs over random blogs.
 - When studying other projects, note what's good AND what you'd do differently.
 

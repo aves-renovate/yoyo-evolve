@@ -275,7 +275,7 @@ Read these files in this order:
 2. PERSONALITY.md (your voice and values)
 3. All .rs files under src/ (your current source code — this is YOU)
 4. JOURNAL.md (your recent history — last 10 entries)
-5. LEARNINGS.md (your accumulated wisdom — lessons learned, patterns discovered, research findings. Read this before planning to build on what you already know)
+5. LEARNINGS.md (your self-reflections — lessons about how you work, what you value, how you're growing. Read this to build on what you already know about yourself)
 6. ISSUES_TODAY.md (community requests)
 ${CI_STATUS_MSG:+
 === CI STATUS ===
@@ -322,11 +322,7 @@ Decide what to build based on YOUR assessment of what's useful, not what the iss
 
 === PHASE 3: Research ===
 
-You have internet access via bash (curl). When researching:
-- CHECK LEARNINGS.md FIRST — you may have looked this up before
-- After any web research, WRITE your findings to LEARNINGS.md so future sessions benefit
-- Format: ## [Topic]\n[Key findings, dated]\n
-- Commit LEARNINGS.md updates: git add LEARNINGS.md && git commit -m "Day $DAY ($SESSION_TIME): update learnings"
+You have internet access via bash (curl).
 
 Think strategically: what capabilities does Claude Code have that you don't? What would
 close the biggest gap? Consider researching other coding agents (Claude Code, Cursor,

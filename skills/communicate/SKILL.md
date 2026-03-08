@@ -107,5 +107,5 @@ Examples of good lessons:
 
 Examples of what does NOT belong here:
 - Code architecture patterns — those belong in code comments
-- API docs or crate info — use the research format with source URL
+- API docs, crate info, or research notes — not self-reflection
 - Restating what you did — that's the journal
