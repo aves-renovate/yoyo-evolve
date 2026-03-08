@@ -257,6 +257,7 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
     let mut collected_text = String::new();
     let mut retriable_error: Option<String> = None;
     let mut md_renderer = MarkdownRenderer::new();
+    let mut spinner: Option<Spinner> = Some(Spinner::start());
 
     loop {
         tokio::select! {
@@ -266,6 +267,8 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                     AgentEvent::ToolExecutionStart {
                         tool_call_id, tool_name, args, ..
                     } => {
+                        // Stop spinner on first activity
+                        if let Some(s) = spinner.take() { s.stop(); }
                         if in_text {
                             println!();
                             in_text = false;
@@ -316,6 +319,8 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                         delta: StreamDelta::Text { delta },
                         ..
                     } => {
+                        // Stop spinner on first text
+                        if let Some(s) = spinner.take() { s.stop(); }
                         if !in_text {
                             println!();
                             in_text = true;
@@ -331,10 +336,14 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                         delta: StreamDelta::Thinking { delta },
                         ..
                     } => {
+                        // Stop spinner on first thinking output
+                        if let Some(s) = spinner.take() { s.stop(); }
                         print!("{DIM}{delta}{RESET}");
                         io::stdout().flush().ok();
                     }
                     AgentEvent::AgentEnd { messages } => {
+                        // Stop spinner if still running
+                        if let Some(s) = spinner.take() { s.stop(); }
                         for msg in &messages {
                             if let AgentMessage::Llm(Message::Assistant { usage: msg_usage, stop_reason, error_message, .. }) = msg {
                                 usage.input += msg_usage.input;
@@ -360,9 +369,11 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                         }
                     }
                     AgentEvent::InputRejected { reason } => {
+                        if let Some(s) = spinner.take() { s.stop(); }
                         eprintln!("{RED}  input rejected: {reason}{RESET}");
                     }
                     AgentEvent::ProgressMessage { text, .. } => {
+                        if let Some(s) = spinner.take() { s.stop(); }
                         if in_text {
                             println!();
                             in_text = false;
@@ -373,6 +384,8 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                 }
             }
             _ = tokio::signal::ctrl_c() => {
+                // Stop spinner if still running
+                if let Some(s) = spinner.take() { s.stop(); }
                 agent.abort();
                 if in_text {
                     println!();
@@ -384,6 +397,11 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                 };
             }
         }
+    }
+
+    // Stop spinner if still running (e.g., channel closed without events)
+    if let Some(s) = spinner.take() {
+        s.stop();
     }
 
     // Flush any remaining buffered markdown content

@@ -382,6 +382,76 @@ impl Default for MarkdownRenderer {
     }
 }
 
+// --- Waiting spinner for AI responses ---
+
+/// Braille spinner frames used for the "thinking" animation.
+pub const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// Get the spinner frame for a given tick index (wraps around).
+pub fn spinner_frame(tick: usize) -> char {
+    SPINNER_FRAMES[tick % SPINNER_FRAMES.len()]
+}
+
+/// A handle to a running spinner task. Dropping or calling `stop()` cancels it.
+pub struct Spinner {
+    cancel: tokio::sync::watch::Sender<bool>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Spinner {
+    /// Start a spinner that prints frames to stderr every 100ms.
+    /// The spinner shows `⠋ thinking...` cycling through braille characters.
+    pub fn start() -> Self {
+        let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(async move {
+            let mut tick: usize = 0;
+            loop {
+                // Check cancellation before printing
+                if *cancel_rx.borrow() {
+                    // Clear the spinner line
+                    eprint!("\r\x1b[K");
+                    break;
+                }
+                let frame = spinner_frame(tick);
+                eprint!("\r{DIM}  {frame} thinking...{RESET}");
+                tick = tick.wrapping_add(1);
+
+                // Wait 100ms or until cancelled
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                    _ = cancel_rx.changed() => {
+                        // Clear the spinner line
+                        eprint!("\r\x1b[K");
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            cancel: cancel_tx,
+            handle: Some(handle),
+        }
+    }
+
+    /// Stop the spinner and clear its output.
+    pub fn stop(mut self) {
+        let _ = self.cancel.send(true);
+        // Take the handle so Drop doesn't try to stop again
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(true);
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,5 +906,57 @@ mod tests {
         let out = render_full(input);
         assert!(out.contains("fn main()"));
         assert!(out.contains("println!"));
+    }
+
+    // --- Spinner tests ---
+
+    #[test]
+    fn test_spinner_frames_not_empty() {
+        assert!(!SPINNER_FRAMES.is_empty());
+    }
+
+    #[test]
+    fn test_spinner_frames_are_braille() {
+        // All braille characters are in the Unicode range U+2800..U+28FF
+        for &frame in SPINNER_FRAMES {
+            assert!(
+                ('\u{2800}'..='\u{28FF}').contains(&frame),
+                "Expected braille character, got {:?}",
+                frame
+            );
+        }
+    }
+
+    #[test]
+    fn test_spinner_frame_cycling() {
+        // First 10 frames should match SPINNER_FRAMES exactly
+        for (i, &expected) in SPINNER_FRAMES.iter().enumerate() {
+            assert_eq!(spinner_frame(i), expected);
+        }
+    }
+
+    #[test]
+    fn test_spinner_frame_wraps_around() {
+        let len = SPINNER_FRAMES.len();
+        // After one full cycle, it should repeat
+        assert_eq!(spinner_frame(0), spinner_frame(len));
+        assert_eq!(spinner_frame(1), spinner_frame(len + 1));
+        assert_eq!(spinner_frame(2), spinner_frame(len + 2));
+    }
+
+    #[test]
+    fn test_spinner_frame_large_index() {
+        // Should not panic even with very large indices
+        let frame = spinner_frame(999_999);
+        assert!(SPINNER_FRAMES.contains(&frame));
+    }
+
+    #[test]
+    fn test_spinner_frames_all_unique() {
+        // Each frame in the animation should be distinct
+        let mut seen = std::collections::HashSet::new();
+        for &frame in SPINNER_FRAMES {
+            assert!(seen.insert(frame), "Duplicate spinner frame: {:?}", frame);
+        }
     }
 }
