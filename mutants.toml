@@ -4,6 +4,14 @@
 #   cargo install cargo-mutants
 #   cargo mutants
 #
+# Or use the threshold script:
+#   ./scripts/run_mutants.sh              # default 20% max survival rate
+#   ./scripts/run_mutants.sh --threshold 15   # stricter
+#   ./scripts/run_mutants.sh --list        # just count mutants
+#
+# Baseline (Day 9, 2026-03-09): 943 total mutants
+# Threshold: 20% max survival rate
+#
 # This file excludes mutants that aren't meaningful to test —
 # cosmetic formatting, ANSI color codes, and display-only functions.
 # The goal: every surviving mutant points to a real gap in the test suite.

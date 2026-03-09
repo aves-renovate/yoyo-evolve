@@ -4,13 +4,50 @@ yoyo uses [cargo-mutants](https://github.com/sourcefrog/cargo-mutants) to assess
 
 **If a mutant survives (no test fails), it means that line of code isn't actually tested.**
 
+## Baseline
+
+As of Day 9, yoyo has **943 total mutants** across its source files. This number grows as features are added. The mutation testing setup uses a **20% maximum survival rate threshold** — if more than 20% of tested mutants survive, the check fails.
+
+| Metric | Value |
+|--------|-------|
+| Total mutants | 943 |
+| Threshold | 20% max survival rate |
+| Established | Day 9 (2026-03-09) |
+
 ## Install cargo-mutants
 
 ```bash
 cargo install cargo-mutants
 ```
 
-## Run mutation testing
+## Quick start with the threshold script
+
+The easiest way to run mutation testing is with the threshold script:
+
+```bash
+# Run with default 20% threshold
+./scripts/run_mutants.sh
+
+# Run with a stricter threshold
+./scripts/run_mutants.sh --threshold 10
+
+# Just count mutants without running them
+./scripts/run_mutants.sh --list
+
+# Test mutants in a specific file only
+./scripts/run_mutants.sh --file src/format.rs
+```
+
+The script:
+1. Runs `cargo mutants` on the project
+2. Counts caught vs survived mutants
+3. Calculates the survival rate
+4. Exits with code 1 if the rate exceeds the threshold
+5. Prints surviving mutants on failure so you know what to fix
+
+This makes it easy for maintainers to run locally and could be added to CI by the project owner.
+
+## Run mutation testing directly
 
 From the project root:
 
@@ -70,10 +107,26 @@ cargo mutants 2>&1 | grep "SURVIVED"
 cargo mutants -F "format_cost"
 ```
 
+## Threshold script for CI
+
+The `scripts/run_mutants.sh` script is designed to be CI-friendly:
+
+```bash
+# In a CI pipeline or pre-merge check:
+./scripts/run_mutants.sh --threshold 20
+
+# Exit codes:
+#   0 = survival rate within threshold (PASS)
+#   1 = survival rate exceeds threshold (FAIL)
+```
+
+The project owner can add this to CI workflows when ready. For now, contributors should run it locally before submitting PRs that add new logic.
+
 ## When to run
 
-Mutation testing is slow — it builds and tests your code once per mutant. Don't add it to CI yet. Run it manually:
+Mutation testing is slow — it builds and tests your code once per mutant. Run it:
 
 - After adding a new feature, to verify test coverage
 - Before a release, as a quality check
 - When you suspect the test suite has gaps
+- On specific files with `--file` to keep it fast during development
