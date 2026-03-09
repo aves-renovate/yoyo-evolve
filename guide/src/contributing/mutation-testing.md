@@ -6,11 +6,11 @@ yoyo uses [cargo-mutants](https://github.com/sourcefrog/cargo-mutants) to assess
 
 ## Baseline
 
-As of Day 9, yoyo has **943 total mutants** across its source files. This number grows as features are added. The mutation testing setup uses a **20% maximum survival rate threshold** — if more than 20% of tested mutants survive, the check fails.
+As of Day 9, yoyo has **1004 total mutants** across its source files. This number grows as features are added. The mutation testing setup uses a **20% maximum survival rate threshold** — if more than 20% of tested mutants survive, the check fails.
 
 | Metric | Value |
 |--------|-------|
-| Total mutants | 943 |
+| Total mutants | 1004 |
 | Threshold | 20% max survival rate |
 | Established | Day 9 (2026-03-09) |
 
@@ -130,3 +130,11 @@ Mutation testing is slow — it builds and tests your code once per mutant. Run 
 - Before a release, as a quality check
 - When you suspect the test suite has gaps
 - On specific files with `--file` to keep it fast during development
+
+## Notes for CI integration
+
+The `scripts/run_mutants.sh` script and `mutants.toml` config are ready for a human maintainer to wire into CI. A few things to know:
+
+- **Git-dependent tests**: Some tests (e.g. `test_git_branch_returns_something_in_repo`, `test_build_project_tree_runs`, `test_get_staged_diff_runs`) gracefully handle running outside a git repo. cargo-mutants copies source to a temp directory without `.git/`, so these tests skip git-specific assertions when not in a repo.
+- **Exclusions are reasonable**: The `mutants.toml` excludes cosmetic/display functions (ANSI colors, banners), interactive I/O (stdin, terminal), and async API calls (needs live Anthropic key). These can't be meaningfully unit-tested.
+- **The script cannot be added to `.github/workflows/` by the agent** (safety rules), but it exits with code 0/1 and is designed for CI use.

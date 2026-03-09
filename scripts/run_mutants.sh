@@ -8,7 +8,7 @@
 #   ./scripts/run_mutants.sh --file src/format.rs  # only mutants in one file
 #
 # Exits 0 if survival rate is at or below threshold, 1 if above.
-# Baseline (Day 9): 943 total mutants.
+# Baseline (Day 9): 1004 total mutants.
 
 set -euo pipefail
 
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --list          Just list mutants without running them"
             echo "  --file PATH     Only test mutants in a specific file"
             echo ""
-            echo "Baseline (Day 9): 943 mutants"
+            echo "Baseline (Day 9): 1004 mutants"
             exit 0
             ;;
         *)

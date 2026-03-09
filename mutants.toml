@@ -9,7 +9,7 @@
 #   ./scripts/run_mutants.sh --threshold 15   # stricter
 #   ./scripts/run_mutants.sh --list        # just count mutants
 #
-# Baseline (Day 9, 2026-03-09): 943 total mutants
+# Baseline (Day 9, 2026-03-09): 1004 total mutants (was 943 before git-test fixes)
 # Threshold: 20% max survival rate
 #
 # This file excludes mutants that aren't meaningful to test —

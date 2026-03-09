@@ -6,3 +6,5 @@ ISSUES_TODAY.md
 ISSUE_RESPONSE.md
 /tmp/
 .worktrees/
+mutants.out/
+mutants.out.old/
