@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 9 (2026-03-09)
+Last updated: Day 10 (2026-03-10)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -101,7 +101,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | API error display | ✅ | ✅ | Shows error messages |
 | Network retry | ✅ | ✅ | yoagent handles 3 retries with exponential backoff by default |
 | Rate limit handling | ✅ | ✅ | yoagent respects retry-after headers on 429s |
-| Graceful degradation | ❌ | ✅ | Claude Code falls back on partial failures |
+| Graceful degradation | 🟡 | ✅ | yoyo has retry logic and error handling; not yet full fallback on partial failures |
 | Ctrl+C handling | ✅ | ✅ | Both handle interrupts |
 
 ---
@@ -116,6 +116,7 @@ Based on this analysis, the highest-impact missing features are:
 4. **Git-aware file selection** — Prioritize recently changed files for context
 
 Recently completed:
+- ✅ Module extraction (Day 10) — split main.rs into 7 focused modules: cli, commands, docs, format, git, main, prompt
 - ✅ OpenAPI tool support (Day 9) — `--openapi <spec>` loads specs and registers API tools
 - ✅ yoagent 0.6.0 upgrade (Day 9) — updated to yoagent 0.6 with OpenAPI feature
 - ✅ Permission system (Day 9) — `--allow`/`--deny` glob flags, `[permissions]` config, deny-overrides-allow
@@ -130,9 +131,9 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~6,900 lines of Rust across 4 source files
-- 235 tests passing
-- 28 REPL commands
+- yoyo: ~9,200 lines of Rust across 7 source files
+- 300 tests passing
+- 29 REPL commands
 - 20 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
