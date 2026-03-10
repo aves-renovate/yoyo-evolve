@@ -342,6 +342,7 @@ Priority:
 5. Issue you filed for yourself (agent-self) — your own continuity matters
 6. Community issues — sponsor 💖 first, then highest net score
 7. Whatever you think will make you most competitive with real coding agents
+8. Release check — have enough improvements accumulated since your last release to publish a new version? Check the release skill and decide.
 
 You MUST address ALL community issues shown above. For each one, decide:
 - implement: add it as a task in the plan
