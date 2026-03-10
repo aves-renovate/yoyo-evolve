@@ -19,6 +19,7 @@
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
+//!   /docs <crate>   Look up docs.rs documentation for a Rust crate
 //!   /fix            Auto-fix build/lint errors (runs checks, sends failures to AI)
 //!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash
 //!   /model <name>   Switch model mid-session
@@ -666,6 +667,7 @@ async fn main() {
                 println!("  /config            Show all current settings");
                 println!("  /context           Show loaded project context files");
                 println!("  /cost              Show estimated session cost");
+                println!("  /docs <crate>      Look up docs.rs documentation for a Rust crate");
                 println!("  /init              Create a starter YOYO.md project context file");
                 println!("  /model <name>      Switch model (preserves conversation)");
                 println!(
@@ -1333,6 +1335,26 @@ async fn main() {
                 }
                 continue;
             }
+            "/docs" => {
+                println!("{DIM}  usage: /docs <crate>");
+                println!("  Look up docs.rs documentation for a Rust crate.{RESET}\n");
+                continue;
+            }
+            s if s.starts_with("/docs ") => {
+                let crate_name = s.trim_start_matches("/docs ").trim();
+                if crate_name.is_empty() {
+                    println!("{DIM}  usage: /docs <crate>{RESET}\n");
+                    continue;
+                }
+                let (found, summary) = fetch_docs_summary(crate_name);
+                if found {
+                    println!("{GREEN}  ✓ {crate_name}{RESET}");
+                    println!("{DIM}{summary}{RESET}\n");
+                } else {
+                    println!("{RED}  ✗ {summary}{RESET}\n");
+                }
+                continue;
+            }
             "/init" => {
                 let path = "YOYO.md";
                 if std::path::Path::new(path).exists() {
@@ -1804,6 +1826,91 @@ fn run_shell_command(cmd: &str) {
     }
 }
 
+/// Fetch a summary from docs.rs for a given Rust crate.
+/// Returns (found, summary_text). If the crate exists, `found` is true and `summary_text`
+/// contains the URL and any extracted description. If not found or on error, `found` is false.
+fn fetch_docs_summary(crate_name: &str) -> (bool, String) {
+    // Validate crate name: only alphanumeric, hyphens, underscores
+    if crate_name.is_empty()
+        || !crate_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return (false, format!("Invalid crate name: '{crate_name}'"));
+    }
+
+    let url = format!(
+        "https://docs.rs/{crate_name}/latest/{}/",
+        crate_name.replace('-', "_")
+    );
+
+    // Use curl to fetch the page (follows redirects, silent mode)
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "--max-time", "10", &url])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let body = String::from_utf8_lossy(&o.stdout);
+
+            // Check if docs.rs returned a "not found" page
+            if body.contains("This crate does not exist")
+                || body.contains("failed to build")
+                || body.contains("The requested resource does not exist")
+                || o.stdout.is_empty()
+            {
+                return (false, format!("Crate '{crate_name}' not found on docs.rs"));
+            }
+
+            // Try to extract the crate description from the page
+            // docs.rs puts it in a <meta name="description" content="..."> tag
+            let description = extract_meta_description(&body);
+
+            let mut summary = format!(
+                "  📦 https://docs.rs/{crate_name}/latest/{}/\n",
+                crate_name.replace('-', "_")
+            );
+            if let Some(desc) = description {
+                summary.push_str(&format!("  📝 {desc}"));
+            } else {
+                summary.push_str("  Docs available at the URL above.");
+            }
+            (true, summary)
+        }
+        Ok(_) => (false, format!("Could not reach docs.rs for '{crate_name}'")),
+        Err(e) => (false, format!("Error fetching docs: {e}")),
+    }
+}
+
+/// Extract the content of `<meta name="description" content="...">` from HTML.
+fn extract_meta_description(html: &str) -> Option<String> {
+    // Look for the meta description tag — docs.rs uses this for crate descriptions
+    let needle = "name=\"description\"";
+    let pos = html.find(needle)?;
+
+    // Find the content attribute nearby
+    let after = &html[pos..];
+    let content_start = after.find("content=\"")?;
+    let content = &after[content_start + 9..]; // skip past 'content="'
+    let content_end = content.find('"')?;
+    let desc = &content[..content_end];
+
+    // Clean up HTML entities
+    let desc = desc
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+
+    let desc = desc.trim().to_string();
+    if desc.is_empty() || desc == "API documentation for the Rust `crate` crate." {
+        None
+    } else {
+        Some(desc)
+    }
+}
+
 /// Check if a line needs continuation (backslash at end, or opens a code fence).
 fn needs_continuation(line: &str) -> bool {
     line.ends_with('\\') || line.starts_with("```")
@@ -2117,9 +2224,10 @@ fn format_tree_from_paths(paths: &[String], max_depth: usize) -> String {
 
 /// Known REPL command prefixes. Used to detect unknown slash commands.
 const KNOWN_COMMANDS: &[&str] = &[
-    "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/fix", "/status",
-    "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history", "/search",
-    "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree", "/pr", "/git",
+    "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/fix",
+    "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
+    "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
+    "/pr", "/git",
 ];
 
 /// Represents a parsed `/git` subcommand.
@@ -2384,9 +2492,9 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
-            "/cost", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff", "/undo",
-            "/health", "/retry", "/run", "/history", "/search", "/model", "/think", "/version",
-            "/tree", "/pr", "/git",
+            "/cost", "/docs", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff",
+            "/undo", "/health", "/retry", "/run", "/history", "/search", "/model", "/think",
+            "/version", "/tree", "/pr", "/git",
         ];
         for cmd in &commands {
             assert!(
@@ -3412,5 +3520,101 @@ diff --git a/src/old.rs b/src/old.rs
             prompt.is_empty() || prompt.contains("Fix"),
             "Empty failures should produce empty or minimal prompt"
         );
+    }
+
+    #[test]
+    fn test_docs_command_recognized() {
+        assert!(!is_unknown_command("/docs"));
+        assert!(!is_unknown_command("/docs serde"));
+        assert!(!is_unknown_command("/docs tokio"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/docs"),
+            "/docs should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_docs_command_matching() {
+        // /docs should match exact or with space, not /docstring etc.
+        let docs_matches = |s: &str| s == "/docs" || s.starts_with("/docs ");
+        assert!(docs_matches("/docs"));
+        assert!(docs_matches("/docs serde"));
+        assert!(docs_matches("/docs tokio-runtime"));
+        assert!(!docs_matches("/docstring"));
+        assert!(!docs_matches("/docsify"));
+    }
+
+    #[test]
+    fn test_docs_crate_arg_extraction() {
+        let input = "/docs serde";
+        let crate_name = input.trim_start_matches("/docs ").trim();
+        assert_eq!(crate_name, "serde");
+
+        let input2 = "/docs tokio-runtime";
+        let crate_name2 = input2.trim_start_matches("/docs ").trim();
+        assert_eq!(crate_name2, "tokio-runtime");
+
+        // Bare /docs has empty after stripping
+        let input_bare = "/docs";
+        assert_eq!(input_bare, "/docs");
+        assert!(!input_bare.starts_with("/docs "));
+    }
+
+    #[test]
+    fn test_fetch_docs_summary_invalid_crate_name() {
+        // Invalid characters should be rejected
+        let (found, msg) = fetch_docs_summary("not a valid/crate");
+        assert!(!found);
+        assert!(msg.contains("Invalid crate name"), "Got: {msg}");
+
+        let (found2, msg2) = fetch_docs_summary("");
+        assert!(!found2);
+        assert!(msg2.contains("Invalid crate name"), "Got: {msg2}");
+
+        let (found3, msg3) = fetch_docs_summary("some@crate!");
+        assert!(!found3);
+        assert!(msg3.contains("Invalid crate name"), "Got: {msg3}");
+    }
+
+    #[test]
+    fn test_fetch_docs_summary_valid_crate_name_accepted() {
+        // These should NOT return "Invalid crate name" — they may fail on network
+        // but the validation should pass
+        let names = ["serde", "tokio", "my-crate", "my_crate", "serde-json"];
+        for name in &names {
+            let (_, msg) = fetch_docs_summary(name);
+            assert!(
+                !msg.contains("Invalid crate name"),
+                "'{name}' should pass validation but got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_meta_description_basic() {
+        let html = r#"<html><head><meta name="description" content="A fast serialization framework"></head></html>"#;
+        let desc = extract_meta_description(html);
+        assert_eq!(desc, Some("A fast serialization framework".to_string()));
+    }
+
+    #[test]
+    fn test_extract_meta_description_with_entities() {
+        let html = r#"<meta name="description" content="Handles &amp; processes &lt;data&gt;">"#;
+        let desc = extract_meta_description(html);
+        assert_eq!(desc, Some("Handles & processes <data>".to_string()));
+    }
+
+    #[test]
+    fn test_extract_meta_description_missing() {
+        let html = r#"<html><head><title>No meta desc</title></head></html>"#;
+        let desc = extract_meta_description(html);
+        assert!(desc.is_none());
+    }
+
+    #[test]
+    fn test_extract_meta_description_empty() {
+        let html = r#"<meta name="description" content="">"#;
+        let desc = extract_meta_description(html);
+        assert!(desc.is_none());
     }
 }

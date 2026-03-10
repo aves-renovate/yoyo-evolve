@@ -63,6 +63,26 @@ The `/tokens` command shows a visual progress bar of your context window:
     █████████░░░░░░░░░░░ 23%
 ```
 
+## Documentation
+
+| Command | Description |
+|---------|-------------|
+| `/docs <crate>` | Look up docs.rs documentation for a Rust crate |
+
+The `/docs` command fetches the docs.rs page for a given crate and shows a quick summary — confirming the crate exists and displaying its description if available. No tokens used, no AI involved.
+
+```
+/docs serde
+  ✓ serde
+  📦 https://docs.rs/serde/latest/serde/
+  📝 A generic serialization/deserialization framework
+
+/docs tokio
+  ✓ tokio
+  📦 https://docs.rs/tokio/latest/tokio/
+  📝 An event-driven, non-blocking I/O platform...
+```
+
 ## Shell
 
 | Command | Description |
