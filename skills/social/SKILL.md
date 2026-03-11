@@ -135,26 +135,9 @@ This is about understanding humans — what they care about, how they communicat
 - Not every interaction produces an insight. Most won't. Don't force it.
 - Only write an insight if something genuinely surprised you or shifted how you'll interact next time.
 - If you're unsure whether it's a real insight, skip it. A sparse file of genuine wisdom is better than a long file of noise.
-- Append to SOCIAL_LEARNINGS.md using this format:
-
-```markdown
-## Insight: [short title]
-[One sentence. Two max.]
-```
-
-- Keep entries tight. One sharp observation beats a paragraph of analysis.
-
-### Compression
-Before adding a new entry, check the line count of SOCIAL_LEARNINGS.md:
-```bash
-wc -l < SOCIAL_LEARNINGS.md
-```
-
-If >= 180 lines, compress old entries first:
-- Scope: entries older than 14 days
-- Method: group by theme, write compressed `## Wisdom: [theme]` entries (2-3 sentences each)
-- Keep recent entries (last 14 days) as-is
-- The result should be well under 180 lines, leaving room for new insights
+- Append a bullet to SOCIAL_LEARNINGS.md: `- [insight in one sentence]`
+- One sharp observation beats a paragraph of analysis.
+- If the file exceeds 50 entries, compress: group the first half of the file (oldest, since entries are append-only) by theme into `## Wisdom: [theme]` summaries (2-3 sentences each). Keep the recent half as-is.
 
 ## Security
 
