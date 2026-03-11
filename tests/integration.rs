@@ -7,6 +7,7 @@
 //! Addresses Issue #69: dogfood yourself via subprocess.
 
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
 /// Build args for running the yoyo binary via `cargo run --`.
 fn yoyo_cmd() -> Command {
@@ -1238,4 +1239,155 @@ fn multiple_providers_missing_keys_all_show_provider_specific_hints() {
             "should not panic for provider {provider}: {stderr}"
         );
     }
+}
+
+// ── UX timing tests ─────────────────────────────────────────────────
+// Good CLI tools respond fast. These tests verify that common operations
+// complete quickly — no hanging, no unnecessary delays.
+
+#[test]
+fn help_flag_completes_in_under_one_second() {
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let elapsed = start.elapsed();
+    assert!(output.status.success(), "--help should exit 0");
+    assert!(
+        elapsed.as_secs_f64() < 1.0,
+        "--help took {:.2}s — should complete in under 1 second",
+        elapsed.as_secs_f64()
+    );
+}
+
+#[test]
+fn version_flag_completes_in_under_one_second() {
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let elapsed = start.elapsed();
+    assert!(output.status.success(), "--version should exit 0");
+    assert!(
+        elapsed.as_secs_f64() < 1.0,
+        "--version took {:.2}s — should complete in under 1 second",
+        elapsed.as_secs_f64()
+    );
+}
+
+#[test]
+fn missing_flag_value_error_appears_quickly() {
+    // Bad input should fail fast, not hang waiting for something
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .arg("--model")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "--model without value should fail"
+    );
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "--model error took {:.2}s — should appear in under 2 seconds",
+        elapsed.as_secs_f64()
+    );
+}
+
+#[test]
+fn missing_api_key_error_appears_quickly() {
+    // No API key with piped input should fail fast with a helpful message
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "missing API key should exit non-zero"
+    );
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "missing API key error took {:.2}s — should appear in under 2 seconds",
+        elapsed.as_secs_f64()
+    );
+}
+
+#[test]
+fn invalid_flag_error_on_stderr_not_just_stdout() {
+    // When we give a flag that requires a value but don't provide one,
+    // the error MUST appear on stderr (not silently swallowed or only on stdout)
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Error must be on stderr
+    assert!(
+        !stderr.is_empty(),
+        "stderr should contain error message, but it was empty (stdout: {stdout})"
+    );
+    assert!(
+        stderr.contains("error:") || stderr.contains("requires a value"),
+        "stderr should contain a clear error message: {stderr}"
+    );
+}
+
+#[test]
+fn empty_piped_stdin_exits_quickly() {
+    // Empty piped input with a fake API key should fail fast, not hang
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .env("ANTHROPIC_API_KEY", "sk-ant-fake-for-test")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "empty piped stdin should exit non-zero"
+    );
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "empty stdin exit took {:.2}s — should complete in under 2 seconds",
+        elapsed.as_secs_f64()
+    );
+}
+
+#[test]
+fn unknown_flag_warning_on_stderr() {
+    // Unknown flags should produce warnings on stderr, not stdout
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--totally-fake-flag")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Warning must appear on stderr
+    assert!(
+        stderr.contains("--totally-fake-flag"),
+        "unknown flag warning should appear on stderr (stderr: {stderr}, stdout: {stdout})"
+    );
 }
