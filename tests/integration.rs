@@ -1244,9 +1244,10 @@ fn multiple_providers_missing_keys_all_show_provider_specific_hints() {
 // ── UX timing tests ─────────────────────────────────────────────────
 // Good CLI tools respond fast. These tests verify that common operations
 // complete quickly — no hanging, no unnecessary delays.
+// Issue #69: tighten from 1s to 100ms — these should be near-instant.
 
 #[test]
-fn help_flag_completes_in_under_one_second() {
+fn help_flag_completes_in_under_100ms() {
     let start = Instant::now();
     let output = yoyo_cmd()
         .arg("--help")
@@ -1257,14 +1258,14 @@ fn help_flag_completes_in_under_one_second() {
     let elapsed = start.elapsed();
     assert!(output.status.success(), "--help should exit 0");
     assert!(
-        elapsed.as_secs_f64() < 1.0,
-        "--help took {:.2}s — should complete in under 1 second",
-        elapsed.as_secs_f64()
+        elapsed.as_millis() < 100,
+        "--help took {}ms — should complete in under 100ms",
+        elapsed.as_millis()
     );
 }
 
 #[test]
-fn version_flag_completes_in_under_one_second() {
+fn version_flag_completes_in_under_100ms() {
     let start = Instant::now();
     let output = yoyo_cmd()
         .arg("--version")
@@ -1275,9 +1276,9 @@ fn version_flag_completes_in_under_one_second() {
     let elapsed = start.elapsed();
     assert!(output.status.success(), "--version should exit 0");
     assert!(
-        elapsed.as_secs_f64() < 1.0,
-        "--version took {:.2}s — should complete in under 1 second",
-        elapsed.as_secs_f64()
+        elapsed.as_millis() < 100,
+        "--version took {}ms — should complete in under 100ms",
+        elapsed.as_millis()
     );
 }
 
@@ -1389,5 +1390,207 @@ fn unknown_flag_warning_on_stderr() {
     assert!(
         stderr.contains("--totally-fake-flag"),
         "unknown flag warning should appear on stderr (stderr: {stderr}, stdout: {stdout})"
+    );
+}
+
+// ── Dogfood UX verification tests (Issue #69) ──────────────────────
+// These test what a real developer would experience — timing, error
+// quality, flag combos, and piped-mode behavior.
+
+#[test]
+fn invalid_provider_error_mentions_known_providers() {
+    // A developer who typos the provider name should see a list of valid options
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .arg("claudee")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Known providers:"),
+        "invalid provider should list known providers: {stderr}"
+    );
+    // Should mention at least the major ones
+    assert!(
+        stderr.contains("anthropic"),
+        "should mention anthropic as a known provider: {stderr}"
+    );
+    assert!(
+        stderr.contains("openai"),
+        "should mention openai as a known provider: {stderr}"
+    );
+    assert!(
+        stderr.contains("ollama"),
+        "should mention ollama as a known provider: {stderr}"
+    );
+}
+
+#[test]
+fn empty_model_string_without_help_proceeds_gracefully() {
+    // --model "" without --help should not panic — it should either warn or proceed
+    // until it hits the API key check
+    let output = yoyo_cmd()
+        .arg("--model")
+        .arg("")
+        .arg("--provider")
+        .arg("ollama")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "should not panic on empty model string: {stderr}"
+    );
+    // It will exit non-zero (empty stdin) but should not crash
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stderr}{stdout}");
+    assert!(
+        !combined.contains("RUST_BACKTRACE"),
+        "should not show backtrace: {combined}"
+    );
+}
+
+#[test]
+fn yes_flag_with_prompt_accepted_without_error() {
+    // --yes with --prompt should be accepted (auto-approve + single-shot mode)
+    // Without a valid API key it'll fail on the API side, but the flags
+    // themselves should not conflict or produce warnings
+    let output = yoyo_cmd()
+        .arg("--yes")
+        .arg("--prompt")
+        .arg("say hello")
+        .arg("--provider")
+        .arg("ollama")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // No unknown flag warnings
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "--yes + --prompt should not trigger unknown flag warning: {stderr}"
+    );
+    // No panics
+    assert!(
+        !stderr.contains("panicked at"),
+        "--yes + --prompt should not panic: {stderr}"
+    );
+}
+
+#[test]
+fn piped_stdin_with_help_flag_shows_help() {
+    // Even when stdin has data, --help should take priority and show help text
+    use std::io::Write;
+
+    let mut child = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn yoyo");
+
+    // Write some data to stdin to simulate: echo "hello" | yoyo --help
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"hello world\n");
+    }
+
+    let output = child.wait_with_output().expect("failed to wait on yoyo");
+    assert!(
+        output.status.success(),
+        "piped stdin + --help should exit 0"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Usage:"),
+        "piped stdin + --help should still show Usage: {stdout}"
+    );
+    assert!(
+        stdout.contains("--model"),
+        "piped stdin + --help should still list flags: {stdout}"
+    );
+    assert!(
+        stdout.contains("Commands (in REPL):"),
+        "piped stdin + --help should still list REPL commands: {stdout}"
+    );
+}
+
+#[test]
+fn allow_deny_yes_prompt_all_combine_cleanly() {
+    // The full permission + auto-approve + single-shot combo a power user might use
+    let output = yoyo_cmd()
+        .arg("--allow")
+        .arg("cargo *")
+        .arg("--deny")
+        .arg("rm -rf *")
+        .arg("--yes")
+        .arg("--prompt")
+        .arg("run tests")
+        .arg("--provider")
+        .arg("ollama")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "full flag combo should not produce unknown flag warnings: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "full flag combo should not panic: {stderr}"
+    );
+}
+
+#[test]
+fn error_output_completes_in_under_100ms() {
+    // Bad flag usage should fail fast — no hanging, no delays
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .arg("--model")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let elapsed = start.elapsed();
+    assert!(
+        !output.status.success(),
+        "--model without value should fail"
+    );
+    assert!(
+        elapsed.as_millis() < 100,
+        "error response took {}ms — should complete in under 100ms",
+        elapsed.as_millis()
+    );
+}
+
+#[test]
+fn help_output_is_consistent_between_piped_and_non_piped() {
+    // Help text should be the same regardless of how stdin is connected
+    let piped_output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let null_output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    let piped_stdout = String::from_utf8_lossy(&piped_output.stdout);
+    let null_stdout = String::from_utf8_lossy(&null_output.stdout);
+
+    assert_eq!(
+        piped_stdout, null_stdout,
+        "help output should be identical whether stdin is piped or null"
     );
 }
