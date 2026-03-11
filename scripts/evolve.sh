@@ -444,6 +444,14 @@ while IFS= read -r task_line; do
     task_title="${task_line#*: }"
     echo "  → Task $TASK_NUM: $task_title"
 
+    # Save pre-task state for rollback
+    if ! PRE_TASK_SHA=$(git rev-parse HEAD 2>&1); then
+        echo "    FATAL: git rev-parse HEAD failed: $PRE_TASK_SHA"
+        echo "    Cannot establish rollback point. Aborting implementation loop."
+        TASK_FAILURES=$((TASK_FAILURES + 1))
+        break
+    fi
+
     # Extract task block (portable awk instead of GNU-only sed syntax)
     TASK_DESC=$(awk "/^### Task $TASK_NUM:/{found=1} found{if(/^### / && !/^### Task $TASK_NUM:/)exit; print}" SESSION_PLAN.md)
 
@@ -484,19 +492,93 @@ TEOF
 
     if [ "$TASK_EXIT" -eq 124 ]; then
         echo "    WARNING: Task $TASK_NUM TIMED OUT after ${IMPL_TIMEOUT}s."
-        TASK_FAILURES=$((TASK_FAILURES + 1))
     elif [ "$TASK_EXIT" -ne 0 ]; then
         echo "    WARNING: Task $TASK_NUM exited with code $TASK_EXIT."
-        TASK_FAILURES=$((TASK_FAILURES + 1))
     fi
 
-    # Abort on API errors — no point running remaining tasks
+    # Abort on API errors — revert partial work and stop
     if grep -q '"type":"error"' "$TASK_LOG"; then
-        echo "    API error in Task $TASK_NUM. Aborting implementation loop."
+        echo "    API error in Task $TASK_NUM. Reverting and aborting implementation loop."
         rm -f "$TASK_LOG"
+        git reset --hard "$PRE_TASK_SHA" 2>/dev/null || true
+        git clean -fd 2>/dev/null || true
+        TASK_FAILURES=$((TASK_FAILURES + 1))
         break
     fi
     rm -f "$TASK_LOG"
+
+    # ── Per-task verification gate ──
+    TASK_OK=true
+
+    # Check 1: Protected files (committed + staged + unstaged)
+    PROTECTED_CHANGES=""
+    if ! PROTECTED_CHANGES=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
+        .github/workflows/ IDENTITY.md PERSONALITY.md \
+        scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+        skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
+        echo "    BLOCKED: Task $TASK_NUM — git diff failed (cannot verify protected files)"
+        echo "    Error: $PROTECTED_CHANGES"
+        TASK_OK=false
+    fi
+    # Check staged (indexed) changes
+    if [ "$TASK_OK" = true ]; then
+        if ! PROTECTED_STAGED=$(git diff --cached --name-only -- \
+            .github/workflows/ IDENTITY.md PERSONALITY.md \
+            scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+            skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
+            echo "    BLOCKED: Task $TASK_NUM — git diff --cached failed"
+            echo "    Error: $PROTECTED_STAGED"
+            TASK_OK=false
+        elif [ -n "$PROTECTED_STAGED" ]; then
+            PROTECTED_CHANGES="${PROTECTED_CHANGES}${PROTECTED_CHANGES:+
+}${PROTECTED_STAGED}"
+        fi
+    fi
+    # Check unstaged working tree changes
+    if [ "$TASK_OK" = true ]; then
+        if ! PROTECTED_UNSTAGED=$(git diff --name-only -- \
+            .github/workflows/ IDENTITY.md PERSONALITY.md \
+            scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+            skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
+            echo "    BLOCKED: Task $TASK_NUM — git diff (working tree) failed"
+            echo "    Error: $PROTECTED_UNSTAGED"
+            TASK_OK=false
+        elif [ -n "$PROTECTED_UNSTAGED" ]; then
+            PROTECTED_CHANGES="${PROTECTED_CHANGES}${PROTECTED_CHANGES:+
+}${PROTECTED_UNSTAGED}"
+        fi
+    fi
+    if [ "$TASK_OK" = true ] && [ -n "$PROTECTED_CHANGES" ]; then
+        echo "    BLOCKED: Task $TASK_NUM modified protected files: $PROTECTED_CHANGES"
+        TASK_OK=false
+    fi
+
+    # Check 2: Build + tests (capture output for diagnostics)
+    if [ "$TASK_OK" = true ]; then
+        if ! BUILD_OUT=$(cargo build 2>&1); then
+            echo "    BLOCKED: Task $TASK_NUM broke the build"
+            echo "$BUILD_OUT" | tail -20 | sed 's/^/      /'
+            TASK_OK=false
+        elif ! TEST_OUT=$(cargo test 2>&1); then
+            echo "    BLOCKED: Task $TASK_NUM broke tests"
+            echo "$TEST_OUT" | tail -20 | sed 's/^/      /'
+            TASK_OK=false
+        fi
+    fi
+
+    # Revert task if verification failed
+    if [ "$TASK_OK" = false ]; then
+        echo "    Reverting Task $TASK_NUM (resetting to $PRE_TASK_SHA)"
+        if ! git reset --hard "$PRE_TASK_SHA"; then
+            echo "    FATAL: git reset --hard failed. Cannot guarantee clean state."
+            TASK_FAILURES=$((TASK_FAILURES + 1))
+            break
+        fi
+        git clean -fd 2>/dev/null || true
+        TASK_FAILURES=$((TASK_FAILURES + 1))
+    else
+        echo "    Task $TASK_NUM: verified OK"
+    fi
 
 done < <(grep '^### Task' SESSION_PLAN.md | head -5)
 
