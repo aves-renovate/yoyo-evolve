@@ -1261,7 +1261,7 @@ mod tests {
 
     #[test]
     fn test_spinner_frames_not_empty() {
-        assert!(!SPINNER_FRAMES.is_empty());
+        assert_eq!(SPINNER_FRAMES.len(), 10);
     }
 
     #[test]
