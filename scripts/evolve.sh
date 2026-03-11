@@ -86,16 +86,17 @@ fi
 
 # Bonus-run gate based on sponsor tier.
 # Cron fires every 4h: 0, 4, 8, 12, 16, 20. Base slots: 0, 8, 16.
-# Tier 0 ($0):   skip 4, 12, 20         → 3 runs/day
-# Tier 1 ($10+): skip 4, 20; allow 12   → 4 runs/day
-# Tier 2 ($50+): allow all              → 6 runs/day
+# GitHub Actions delays can shift start times by 30-90 min, so we use ±1 hour ranges.
+# Tier 0 ($0):   skip 3-5, 11-13, 19-21   → 3 runs/day
+# Tier 1 ($10+): skip 3-5, 19-21          → 4 runs/day
+# Tier 2 ($50+): allow all                → 6 runs/day
 CURRENT_HOUR=$((10#$(date +%H)))
 SKIP_RUN="false"
 case "$CURRENT_HOUR" in
-    4|20)
+    3|4|5|19|20|21)
         [ "$SPONSOR_TIER" -lt 2 ] 2>/dev/null && SKIP_RUN="true"
         ;;
-    12)
+    11|12|13)
         [ "$SPONSOR_TIER" -lt 1 ] 2>/dev/null && SKIP_RUN="true"
         ;;
 esac
