@@ -329,67 +329,75 @@ fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) -> M
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_agent(
-    model: &str,
-    api_key: &str,
-    provider: &str,
-    base_url: Option<&str>,
-    skills: &yoagent::skills::SkillSet,
-    system_prompt: &str,
+/// Holds all configuration needed to build an Agent.
+/// Extracted from the 12-argument `build_agent` function so that
+/// creating or rebuilding an agent is just `config.build_agent()`.
+struct AgentConfig {
+    model: String,
+    api_key: String,
+    provider: String,
+    base_url: Option<String>,
+    skills: yoagent::skills::SkillSet,
+    system_prompt: String,
     thinking: ThinkingLevel,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     max_turns: Option<usize>,
     auto_approve: bool,
-    permissions: &cli::PermissionConfig,
-) -> Agent {
-    let mut agent = if provider == "anthropic" && base_url.is_none() {
-        // Default Anthropic path — unchanged
-        Agent::new(AnthropicProvider)
-            .with_system_prompt(system_prompt)
-            .with_model(model)
-            .with_api_key(api_key)
-            .with_thinking(thinking)
-            .with_skills(skills.clone())
-            .with_tools(build_tools(auto_approve, permissions))
-    } else if provider == "google" {
-        // Google uses its own provider
-        let config = create_model_config(provider, model, base_url);
-        Agent::new(GoogleProvider)
-            .with_system_prompt(system_prompt)
-            .with_model(model)
-            .with_api_key(api_key)
-            .with_thinking(thinking)
-            .with_skills(skills.clone())
-            .with_tools(build_tools(auto_approve, permissions))
-            .with_model_config(config)
-    } else {
-        // All other providers use OpenAI-compatible API
-        let config = create_model_config(provider, model, base_url);
-        Agent::new(OpenAiCompatProvider)
-            .with_system_prompt(system_prompt)
-            .with_model(model)
-            .with_api_key(api_key)
-            .with_thinking(thinking)
-            .with_skills(skills.clone())
-            .with_tools(build_tools(auto_approve, permissions))
-            .with_model_config(config)
-    };
+    permissions: cli::PermissionConfig,
+}
 
-    if let Some(max) = max_tokens {
-        agent = agent.with_max_tokens(max);
+impl AgentConfig {
+    /// Build a fresh Agent from this configuration.
+    fn build_agent(&self) -> Agent {
+        let base_url = self.base_url.as_deref();
+        let mut agent = if self.provider == "anthropic" && base_url.is_none() {
+            // Default Anthropic path — unchanged
+            Agent::new(AnthropicProvider)
+                .with_system_prompt(&self.system_prompt)
+                .with_model(&self.model)
+                .with_api_key(&self.api_key)
+                .with_thinking(self.thinking)
+                .with_skills(self.skills.clone())
+                .with_tools(build_tools(self.auto_approve, &self.permissions))
+        } else if self.provider == "google" {
+            // Google uses its own provider
+            let config = create_model_config(&self.provider, &self.model, base_url);
+            Agent::new(GoogleProvider)
+                .with_system_prompt(&self.system_prompt)
+                .with_model(&self.model)
+                .with_api_key(&self.api_key)
+                .with_thinking(self.thinking)
+                .with_skills(self.skills.clone())
+                .with_tools(build_tools(self.auto_approve, &self.permissions))
+                .with_model_config(config)
+        } else {
+            // All other providers use OpenAI-compatible API
+            let config = create_model_config(&self.provider, &self.model, base_url);
+            Agent::new(OpenAiCompatProvider)
+                .with_system_prompt(&self.system_prompt)
+                .with_model(&self.model)
+                .with_api_key(&self.api_key)
+                .with_thinking(self.thinking)
+                .with_skills(self.skills.clone())
+                .with_tools(build_tools(self.auto_approve, &self.permissions))
+                .with_model_config(config)
+        };
+
+        if let Some(max) = self.max_tokens {
+            agent = agent.with_max_tokens(max);
+        }
+        if let Some(temp) = self.temperature {
+            agent.temperature = Some(temp);
+        }
+        if let Some(turns) = self.max_turns {
+            agent = agent.with_execution_limits(ExecutionLimits {
+                max_turns: turns,
+                ..ExecutionLimits::default()
+            });
+        }
+        agent
     }
-    if let Some(temp) = temperature {
-        agent.temperature = Some(temp);
-    }
-    if let Some(turns) = max_turns {
-        agent = agent.with_execution_limits(ExecutionLimits {
-            max_turns: turns,
-            ..ExecutionLimits::default()
-        });
-    }
-    agent
 }
 #[tokio::main]
 async fn main() {
@@ -409,16 +417,6 @@ async fn main() {
         enable_verbose();
     }
 
-    let mut model = config.model;
-    let api_key = config.api_key;
-    let provider = config.provider;
-    let base_url = config.base_url;
-    let skills = config.skills;
-    let system_prompt = config.system_prompt;
-    let mut thinking = config.thinking;
-    let max_tokens = config.max_tokens;
-    let temperature = config.temperature;
-    let max_turns = config.max_turns;
     let continue_session = config.continue_session;
     let output_path = config.output_path;
     let mcp_servers = config.mcp_servers;
@@ -426,22 +424,23 @@ async fn main() {
     // Auto-approve in non-interactive modes (piped, --prompt) or when --yes is set
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
     let auto_approve = config.auto_approve || !is_interactive;
-    let permissions = config.permissions;
 
-    let mut agent = build_agent(
-        &model,
-        &api_key,
-        &provider,
-        base_url.as_deref(),
-        &skills,
-        &system_prompt,
-        thinking,
-        max_tokens,
-        temperature,
-        max_turns,
+    let mut agent_config = AgentConfig {
+        model: config.model,
+        api_key: config.api_key,
+        provider: config.provider,
+        base_url: config.base_url,
+        skills: config.skills,
+        system_prompt: config.system_prompt,
+        thinking: config.thinking,
+        max_tokens: config.max_tokens,
+        temperature: config.temperature,
+        max_turns: config.max_turns,
         auto_approve,
-        &permissions,
-    );
+        permissions: config.permissions,
+    };
+
+    let mut agent = agent_config.build_agent();
 
     // Connect to MCP servers (--mcp flags)
     let mut mcp_count = 0u32;
@@ -467,20 +466,7 @@ async fn main() {
             Err(e) => {
                 eprintln!("{RED}  ✗ mcp: failed to connect to '{mcp_cmd}': {e}{RESET}");
                 // Agent was consumed on error — rebuild it with previous MCP connections lost
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &provider,
-                    base_url.as_deref(),
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                    &permissions,
-                );
+                agent = agent_config.build_agent();
                 eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
             }
         }
@@ -502,20 +488,7 @@ async fn main() {
             Err(e) => {
                 eprintln!("{RED}  ✗ openapi: failed to load '{spec_path}': {e}{RESET}");
                 // Agent was consumed on error — rebuild it
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &provider,
-                    base_url.as_deref(),
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                    &permissions,
-                );
+                agent = agent_config.build_agent();
                 eprintln!("{DIM}  openapi: agent rebuilt (previous connections lost){RESET}");
             }
         }
@@ -539,13 +512,25 @@ async fn main() {
 
     // --prompt / -p: single-shot mode with a prompt argument
     if let Some(prompt_text) = config.prompt_arg {
-        if provider != "anthropic" {
-            eprintln!("{DIM}  yoyo (prompt mode) — provider: {provider}, model: {model}{RESET}");
+        if agent_config.provider != "anthropic" {
+            eprintln!(
+                "{DIM}  yoyo (prompt mode) — provider: {}, model: {}{RESET}",
+                agent_config.provider, agent_config.model
+            );
         } else {
-            eprintln!("{DIM}  yoyo (prompt mode) — model: {model}{RESET}");
+            eprintln!(
+                "{DIM}  yoyo (prompt mode) — model: {}{RESET}",
+                agent_config.model
+            );
         }
         let mut session_total = Usage::default();
-        let response = run_prompt(&mut agent, prompt_text.trim(), &mut session_total, &model).await;
+        let response = run_prompt(
+            &mut agent,
+            prompt_text.trim(),
+            &mut session_total,
+            &agent_config.model,
+        )
+        .await;
         write_output_file(&output_path, &response);
         return;
     }
@@ -560,9 +545,12 @@ async fn main() {
             std::process::exit(1);
         }
 
-        eprintln!("{DIM}  yoyo (piped mode) — model: {model}{RESET}");
+        eprintln!(
+            "{DIM}  yoyo (piped mode) — model: {}{RESET}",
+            agent_config.model
+        );
         let mut session_total = Usage::default();
-        let response = run_prompt(&mut agent, input, &mut session_total, &model).await;
+        let response = run_prompt(&mut agent, input, &mut session_total, &agent_config.model).await;
         write_output_file(&output_path, &response);
         return;
     }
@@ -573,21 +561,21 @@ async fn main() {
         .unwrap_or_else(|_| "(unknown)".to_string());
 
     print_banner();
-    if provider != "anthropic" {
-        println!("{DIM}  provider: {provider}{RESET}");
+    if agent_config.provider != "anthropic" {
+        println!("{DIM}  provider: {}{RESET}", agent_config.provider);
     }
-    println!("{DIM}  model: {model}{RESET}");
-    if let Some(ref url) = base_url {
+    println!("{DIM}  model: {}{RESET}", agent_config.model);
+    if let Some(ref url) = agent_config.base_url {
         println!("{DIM}  base_url: {url}{RESET}");
     }
-    if thinking != ThinkingLevel::Off {
-        println!("{DIM}  thinking: {thinking:?}{RESET}");
+    if agent_config.thinking != ThinkingLevel::Off {
+        println!("{DIM}  thinking: {:?}{RESET}", agent_config.thinking);
     }
-    if let Some(temp) = temperature {
+    if let Some(temp) = agent_config.temperature {
         println!("{DIM}  temperature: {temp:.1}{RESET}");
     }
-    if !skills.is_empty() {
-        println!("{DIM}  skills: {} loaded{RESET}", skills.len());
+    if !agent_config.skills.is_empty() {
+        println!("{DIM}  skills: {} loaded{RESET}", agent_config.skills.len());
     }
     if mcp_count > 0 {
         println!("{DIM}  mcp: {mcp_count} server(s) connected{RESET}");
@@ -598,14 +586,14 @@ async fn main() {
     if is_verbose() {
         println!("{DIM}  verbose: on{RESET}");
     }
-    if !auto_approve {
+    if !agent_config.auto_approve {
         println!("{DIM}  tools: confirmation required (use --yes to skip){RESET}");
     }
-    if !permissions.is_empty() {
+    if !agent_config.permissions.is_empty() {
         println!(
             "{DIM}  permissions: {} allow, {} deny pattern(s){RESET}",
-            permissions.allow.len(),
-            permissions.deny.len()
+            agent_config.permissions.allow.len(),
+            agent_config.permissions.deny.len()
         );
     }
     if let Some(branch) = git_branch() {
@@ -673,63 +661,37 @@ async fn main() {
                 continue;
             }
             "/status" => {
-                commands::handle_status(&model, &cwd, &session_total);
+                commands::handle_status(&agent_config.model, &cwd, &session_total);
                 continue;
             }
             "/tokens" => {
-                commands::handle_tokens(&agent, &session_total, &model);
+                commands::handle_tokens(&agent, &session_total, &agent_config.model);
                 continue;
             }
             "/cost" => {
-                commands::handle_cost(&session_total, &model);
+                commands::handle_cost(&session_total, &agent_config.model);
                 continue;
             }
             "/clear" => {
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &provider,
-                    base_url.as_deref(),
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                    &permissions,
-                );
+                agent = agent_config.build_agent();
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
             }
             "/model" => {
-                commands::handle_model_show(&model);
+                commands::handle_model_show(&agent_config.model);
                 continue;
             }
             s if s.starts_with("/model ") => {
                 let new_model = s.trim_start_matches("/model ").trim();
                 if new_model.is_empty() {
-                    println!("{DIM}  current model: {model}");
+                    println!("{DIM}  current model: {}", agent_config.model);
                     println!("  usage: /model <name>{RESET}\n");
                     continue;
                 }
-                model = new_model.to_string();
+                agent_config.model = new_model.to_string();
                 // Rebuild agent with new model, preserving conversation
                 let saved = agent.save_messages().ok();
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &provider,
-                    base_url.as_deref(),
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                    &permissions,
-                );
+                agent = agent_config.build_agent();
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
                 }
@@ -737,44 +699,31 @@ async fn main() {
                 continue;
             }
             "/think" => {
-                commands::handle_think_show(thinking);
+                commands::handle_think_show(agent_config.thinking);
                 continue;
             }
             s if s.starts_with("/think ") => {
                 let level_str = s.trim_start_matches("/think ").trim();
                 if level_str.is_empty() {
-                    let current = thinking_level_name(thinking);
+                    let current = thinking_level_name(agent_config.thinking);
                     println!("{DIM}  thinking: {current}");
                     println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
                     continue;
                 }
                 let new_thinking = parse_thinking_level(level_str);
-                if new_thinking == thinking {
-                    let current = thinking_level_name(thinking);
+                if new_thinking == agent_config.thinking {
+                    let current = thinking_level_name(agent_config.thinking);
                     println!("{DIM}  thinking already set to {current}{RESET}\n");
                     continue;
                 }
-                thinking = new_thinking;
+                agent_config.thinking = new_thinking;
                 // Rebuild agent with new thinking level, preserving conversation
                 let saved = agent.save_messages().ok();
-                agent = build_agent(
-                    &model,
-                    &api_key,
-                    &provider,
-                    base_url.as_deref(),
-                    &skills,
-                    &system_prompt,
-                    thinking,
-                    max_tokens,
-                    temperature,
-                    max_turns,
-                    auto_approve,
-                    &permissions,
-                );
+                agent = agent_config.build_agent();
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
                 }
-                let level_name = thinking_level_name(thinking);
+                let level_name = thinking_level_name(agent_config.thinking);
                 println!("{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n");
                 continue;
             }
@@ -808,7 +757,7 @@ async fn main() {
             }
             "/fix" => {
                 if let Some(fix_prompt) =
-                    commands::handle_fix(&mut agent, &mut session_total, &model).await
+                    commands::handle_fix(&mut agent, &mut session_total, &agent_config.model).await
                 {
                     last_input = Some(fix_prompt);
                 }
@@ -828,15 +777,15 @@ async fn main() {
             }
             "/config" => {
                 commands::handle_config(
-                    &provider,
-                    &model,
-                    &base_url,
-                    thinking,
-                    max_tokens,
-                    max_turns,
-                    temperature,
-                    &skills,
-                    &system_prompt,
+                    &agent_config.provider,
+                    &agent_config.model,
+                    &agent_config.base_url,
+                    agent_config.thinking,
+                    agent_config.max_tokens,
+                    agent_config.max_turns,
+                    agent_config.temperature,
+                    &agent_config.skills,
+                    &agent_config.system_prompt,
                     mcp_count,
                     openapi_count,
                     &agent,
@@ -870,7 +819,13 @@ async fn main() {
                 continue;
             }
             "/retry" => {
-                commands::handle_retry(&mut agent, &last_input, &mut session_total, &model).await;
+                commands::handle_retry(
+                    &mut agent,
+                    &last_input,
+                    &mut session_total,
+                    &agent_config.model,
+                )
+                .await;
                 continue;
             }
             s if s == "/tree" || s.starts_with("/tree ") => {
@@ -903,7 +858,7 @@ async fn main() {
         }
 
         last_input = Some(input.to_string());
-        run_prompt(&mut agent, input, &mut session_total, &model).await;
+        run_prompt(&mut agent, input, &mut session_total, &agent_config.model).await;
 
         // Auto-compact when context window is getting full
         auto_compact_if_needed(&mut agent);
@@ -1739,6 +1694,196 @@ mod tests {
         let tools_confirm = build_tools(false, &perms);
         assert_eq!(tools_approved.len(), 6);
         assert_eq!(tools_confirm.len(), 6);
+    }
+
+    #[test]
+    fn test_agent_config_struct_fields() {
+        // AgentConfig should hold all the fields needed to build an agent
+        let config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "You are helpful.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: Some(4096),
+            temperature: Some(0.7),
+            max_turns: Some(10),
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        assert_eq!(config.model, "claude-opus-4-6");
+        assert_eq!(config.api_key, "test-key");
+        assert_eq!(config.provider, "anthropic");
+        assert!(config.base_url.is_none());
+        assert_eq!(config.system_prompt, "You are helpful.");
+        assert_eq!(config.thinking, ThinkingLevel::Off);
+        assert_eq!(config.max_tokens, Some(4096));
+        assert_eq!(config.temperature, Some(0.7));
+        assert_eq!(config.max_turns, Some(10));
+        assert!(config.auto_approve);
+        assert!(config.permissions.is_empty());
+    }
+
+    #[test]
+    fn test_agent_config_build_agent_anthropic() {
+        // build_agent should produce an Agent for the anthropic provider
+        let config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test prompt.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        let agent = config.build_agent();
+        // Agent should have 6 tools (bash, read, write, edit, list, search)
+        // Agent created successfully — verify it has empty message history
+        assert_eq!(agent.messages().len(), 0);
+    }
+
+    #[test]
+    fn test_agent_config_build_agent_openai() {
+        // build_agent should produce an Agent for a non-anthropic provider
+        let config = AgentConfig {
+            model: "gpt-4o".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "openai".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: Some(2048),
+            temperature: Some(0.5),
+            max_turns: Some(20),
+            auto_approve: false,
+            permissions: cli::PermissionConfig::default(),
+        };
+        let agent = config.build_agent();
+        // Agent created successfully — verify it has empty message history
+        assert_eq!(agent.messages().len(), 0);
+        assert_eq!(agent.temperature, Some(0.5));
+    }
+
+    #[test]
+    fn test_agent_config_build_agent_google() {
+        // Google provider should also work
+        let config = AgentConfig {
+            model: "gemini-2.0-flash".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "google".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        let agent = config.build_agent();
+        // Agent created successfully — verify it has empty message history
+        assert_eq!(agent.messages().len(), 0);
+    }
+
+    #[test]
+    fn test_agent_config_build_agent_with_base_url() {
+        // Anthropic with a base_url should use OpenAI-compat path
+        let config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: Some("http://localhost:8080/v1".to_string()),
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        let agent = config.build_agent();
+        // Agent created successfully — verify it has empty message history
+        assert_eq!(agent.messages().len(), 0);
+    }
+
+    #[test]
+    fn test_agent_config_rebuild_produces_fresh_agent() {
+        // Calling build_agent twice should produce two independent agents
+        let config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        let agent1 = config.build_agent();
+        let agent2 = config.build_agent();
+        // Both should have empty message history
+        assert_eq!(agent1.messages().len(), 0);
+        assert_eq!(agent2.messages().len(), 0);
+    }
+
+    #[test]
+    fn test_agent_config_mutable_model_switch() {
+        // Simulates /model switch: change config.model, rebuild agent
+        let mut config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        assert_eq!(config.model, "claude-opus-4-6");
+        config.model = "claude-haiku-35".to_string();
+        let _agent = config.build_agent();
+        assert_eq!(config.model, "claude-haiku-35");
+    }
+
+    #[test]
+    fn test_agent_config_mutable_thinking_switch() {
+        // Simulates /think switch: change config.thinking, rebuild agent
+        let mut config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+        };
+        assert_eq!(config.thinking, ThinkingLevel::Off);
+        config.thinking = ThinkingLevel::High;
+        let _agent = config.build_agent();
+        assert_eq!(config.thinking, ThinkingLevel::High);
     }
 
     #[test]
