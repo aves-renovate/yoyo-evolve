@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 10 (2026-03-10)
+Last updated: Day 12 (2026-03-12)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -69,7 +69,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
 | Project context files | ✅ | ✅ | yoyo reads YOYO.md, CLAUDE.md, and .yoyo/instructions.md |
-| Auto-detect project type | 🟡 | ✅ | `detect_project_type` in `/health` and `/fix` (Rust, Node, Python, Go, Make); not yet used for auto-detecting test runner outside those commands |
+| Auto-detect project type | ✅ | ✅ | `detect_project_type` used by `/test`, `/lint`, `/health`, `/fix` (Rust, Node, Python, Go, Make) |
 | Git-aware file selection | ❌ | ✅ | Claude Code prioritizes recently changed files |
 | Codebase indexing | ❌ | ✅ | Claude Code indexes for faster search |
 
@@ -77,8 +77,8 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
-| Run tests | 🟡 | ✅ | yoyo can via bash; Claude Code auto-detects test runner |
-| Auto-fix lint errors | 🟡 | ✅ | `/fix` runs checks, sends failures to AI for fixing (Day 9); not yet automatic like `clippy --fix` |
+| Run tests | ✅ | ✅ | `/test` auto-detects project type and runs tests (Day 12) |
+| Auto-fix lint errors | ✅ | ✅ | `/lint` auto-detects and runs linter; `/fix` sends failures to AI (Day 9+12) |
 | PR description generation | ❌ | ✅ | Claude Code generates PR descriptions |
 | Commit message generation | ✅ | ✅ | `/commit` with heuristic-based message generation from staged diff (Day 8) |
 | Multi-file refactoring | 🟡 | ✅ | yoyo can via tools; Claude Code is better at coordinating |
@@ -116,6 +116,9 @@ Based on this analysis, the highest-impact missing features are:
 4. **Git-aware file selection** — Prioritize recently changed files for context
 
 Recently completed:
+- ✅ `/test` command (Day 12) — auto-detect project type and run tests
+- ✅ `/lint` command (Day 12) — auto-detect project type and run linter
+- ✅ Conversation search highlighting (Day 12) — `/search` highlights matches in results
 - ✅ Module extraction (Day 10) — split main.rs into 7 focused modules: cli, commands, docs, format, git, main, prompt
 - ✅ OpenAPI tool support (Day 9) — `--openapi <spec>` loads specs and registers API tools
 - ✅ yoagent 0.6.0 upgrade (Day 9) — updated to yoagent 0.6 with OpenAPI feature
@@ -131,10 +134,10 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~9,200 lines of Rust across 7 source files
-- 300 tests passing
-- 29 REPL commands
-- 20 CLI flags (+ short aliases)
+- yoyo: ~8,500 lines of Rust across 7 source files
+- 357 tests passing
+- 31 REPL commands
+- 21 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
 - OpenAPI tool loading
