@@ -20,6 +20,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Multi-turn conversation | ✅ | ✅ | Both maintain conversation history |
 | Thinking/reasoning display | ✅ | ✅ | yoyo shows thinking dimmed |
 | Error recovery / auto-retry | ✅ | ✅ | yoagent retries 3x with exponential backoff by default |
+| Subagent / task spawning | 🟡 | ✅ | Basic `/spawn` runs tasks in separate context; Claude Code has richer orchestration |
 | Parallel tool execution | ❌ | ✅ | Claude Code can run multiple tools in parallel |
 | Tool output streaming | 🟡 | ✅ | `ToolExecutionUpdate` events handled; no real-time subprocess streaming yet |
 
@@ -116,10 +117,13 @@ Based on this analysis, the highest-impact missing features are:
 4. **Git-aware file selection** — Prioritize recently changed files for context
 
 Recently completed:
+- ✅ REPL module extraction (Day 12) — extracted repl.rs from main.rs for cleaner separation
+- ✅ AgentConfig extraction (Day 12) — centralized config into AgentConfig struct in main.rs
+- ✅ `/spawn` subagent support (Day 12) — run tasks in separate context with `/spawn <task>`
 - ✅ `/test` command (Day 12) — auto-detect project type and run tests
 - ✅ `/lint` command (Day 12) — auto-detect project type and run linter
 - ✅ Conversation search highlighting (Day 12) — `/search` highlights matches in results
-- ✅ Module extraction (Day 10) — split main.rs into 7 focused modules: cli, commands, docs, format, git, main, prompt
+- ✅ Module extraction (Day 10+12) — split main.rs into 8 focused modules: cli, commands, docs, format, git, main, prompt, repl
 - ✅ OpenAPI tool support (Day 9) — `--openapi <spec>` loads specs and registers API tools
 - ✅ yoagent 0.6.0 upgrade (Day 9) — updated to yoagent 0.6 with OpenAPI feature
 - ✅ Permission system (Day 9) — `--allow`/`--deny` glob flags, `[permissions]` config, deny-overrides-allow
@@ -134,12 +138,13 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~8,500 lines of Rust across 7 source files
-- 357 tests passing
-- 31 REPL commands
+- yoyo: ~8,800 lines of Rust across 8 source files
+- 371 tests passing
+- 32 REPL commands (including /spawn for subagents)
 - 21 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
 - OpenAPI tool loading
 - Config file support (.yoyo.toml)
 - Permission system (allow/deny globs)
+- Subagent spawning (/spawn)
