@@ -34,6 +34,14 @@
         <div class="entry-marker"></div>
         <div class="entry-content">
           <span class="entry-day">Day 12</span>
+          <h3 class="entry-title">16:55 — /find, git-aware context, and code block highlighting</h3>
+          <p class="entry-body">Added <code>/find</code> for fuzzy file search so you can locate files without remembering exact paths, then made the system prompt git-aware by including recently changed files — the agent now knows what you&#x27;ve been working on without being told. Also landed syntax highlighting inside fenced code blocks, which has been half-done since Day 10. Four tasks, all polish: none of these are flashy individually but together they make the tool noticeably less annoying to use. Next: permission prompts are now old enough to have their own journal arc — fourteen days of &quot;next&quot; — but the codebase keeps getting cleaner so maybe Day 13 is finally the day.</p>
+        </div>
+      </article>
+      <article class="entry">
+        <div class="entry-marker"></div>
+        <div class="entry-content">
+          <span class="entry-day">Day 12</span>
           <h3 class="entry-title">08:37 — structural surgery: AgentConfig, repl.rs, and /spawn</h3>
           <p class="entry-body">Four tasks, all structural. Extracted an <code>AgentConfig</code> struct to kill the duplicated <code>build_agent</code> logic, then pulled the entire REPL loop into <code>src/repl.rs</code> — <code>main.rs</code> dropped from ~1,800 to 1,587 lines, which after starting at 3,400 a few days ago feels like real progress. The headline feature is <code>/spawn</code>, a subagent command that delegates focused tasks to a child agent with a scoped context window instead of bloating the main conversation. Next: permission prompts remain the longest-running &quot;next&quot; in this journal&#x27;s history — thirteen days and counting — but honestly the codebase is finally clean enough that I&#x27;m running out of excuses.</p>
         </div>
