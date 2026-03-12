@@ -24,7 +24,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/fix",
     "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
     "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
-    "/pr", "/git", "/test",
+    "/pr", "/git", "/test", "/lint",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -75,6 +75,9 @@ pub fn handle_help() {
     println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
     println!("  !<cmd>             Shortcut for /run");
     println!("  /test              Auto-detect and run project tests (cargo test, npm test, etc.)");
+    println!(
+        "  /lint              Auto-detect and run project linter (clippy, eslint, ruff, etc.)"
+    );
     println!("  /history           Show summary of conversation messages");
     println!("  /search <query>    Search conversation history for matching messages");
     println!("  /tree [depth]      Show project directory tree (default depth: 3)");
@@ -1038,6 +1041,96 @@ pub fn handle_test() -> Option<String> {
                 println!("\n{RED}  ✗ Tests failed (exit {code}, {elapsed}){RESET}\n");
                 let mut summary = format!("Tests FAILED (exit {code}, {elapsed}): {label}");
                 // Include a preview of the error output for AI context
+                let error_text = if !stderr.is_empty() {
+                    stderr.to_string()
+                } else {
+                    stdout.to_string()
+                };
+                let lines: Vec<&str> = error_text.lines().collect();
+                let preview_lines = if lines.len() > 20 {
+                    &lines[lines.len() - 20..]
+                } else {
+                    &lines
+                };
+                summary.push_str("\n\nLast output:\n");
+                for line in preview_lines {
+                    summary.push_str(line);
+                    summary.push('\n');
+                }
+                Some(summary)
+            }
+        }
+        Err(e) => {
+            eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
+            Some(format!("Failed to run {label}: {e}"))
+        }
+    }
+}
+
+// ── /lint ──────────────────────────────────────────────────────────────
+
+/// Return the lint command for a given project type.
+pub fn lint_command_for_project(
+    project_type: &ProjectType,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    match project_type {
+        ProjectType::Rust => Some((
+            "cargo clippy --all-targets -- -D warnings",
+            vec!["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+        )),
+        ProjectType::Node => Some(("npx eslint .", vec!["npx", "eslint", "."])),
+        ProjectType::Python => Some(("ruff check .", vec!["ruff", "check", "."])),
+        ProjectType::Go => Some(("golangci-lint run", vec!["golangci-lint", "run"])),
+        ProjectType::Make | ProjectType::Unknown => None,
+    }
+}
+
+/// Handle the /lint command: auto-detect project type and run linter.
+/// Returns a summary string suitable for AI context.
+pub fn handle_lint() -> Option<String> {
+    let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
+    println!("{DIM}  Detected project: {project_type}{RESET}");
+    if project_type == ProjectType::Unknown {
+        println!(
+            "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
+        );
+        return None;
+    }
+
+    let (label, args) = match lint_command_for_project(&project_type) {
+        Some(cmd) => cmd,
+        None => {
+            println!("{DIM}  No lint command configured for {project_type}{RESET}\n");
+            return None;
+        }
+    };
+
+    println!("{DIM}  Running: {label}...{RESET}");
+    let start = std::time::Instant::now();
+    let output = std::process::Command::new(args[0])
+        .args(&args[1..])
+        .output();
+    let elapsed = format_duration(start.elapsed());
+
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let stderr = String::from_utf8_lossy(&o.stderr);
+
+            if !stdout.is_empty() {
+                print!("{stdout}");
+            }
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
+
+            if o.status.success() {
+                println!("\n{GREEN}  ✓ Lint passed ({elapsed}){RESET}\n");
+                Some(format!("Lint passed ({elapsed}): {label}"))
+            } else {
+                let code = o.status.code().unwrap_or(-1);
+                println!("\n{RED}  ✗ Lint failed (exit {code}, {elapsed}){RESET}\n");
+                let mut summary = format!("Lint FAILED (exit {code}, {elapsed}): {label}");
                 let error_text = if !stderr.is_empty() {
                     stderr.to_string()
                 } else {

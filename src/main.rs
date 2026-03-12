@@ -27,6 +27,7 @@
 //!   /search <query> Search conversation history
 //!   /tree [depth]   Show project directory tree
 //!   /test           Auto-detect and run project tests
+//!   /lint           Auto-detect and run project linter
 //!   /pr [number]    List open PRs, view/diff/comment/checkout a PR
 //!   /retry          Re-send the last user input
 
@@ -801,6 +802,10 @@ async fn main() {
                 commands::handle_test();
                 continue;
             }
+            "/lint" => {
+                commands::handle_lint();
+                continue;
+            }
             "/fix" => {
                 if let Some(fix_prompt) =
                     commands::handle_fix(&mut agent, &mut session_total, &model).await
@@ -975,8 +980,8 @@ mod tests {
     use super::*;
     use commands::{
         build_fix_prompt, build_project_tree, detect_project_type, format_tree_from_paths,
-        health_checks_for_project, run_health_check_for_project, run_health_checks_full_output,
-        test_command_for_project, ProjectType,
+        health_checks_for_project, lint_command_for_project, run_health_check_for_project,
+        run_health_checks_full_output, test_command_for_project, ProjectType,
     };
 
     #[test]
@@ -1011,7 +1016,7 @@ mod tests {
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
             "/cost", "/docs", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff",
             "/undo", "/health", "/retry", "/run", "/history", "/search", "/model", "/think",
-            "/version", "/tree", "/pr", "/git", "/test",
+            "/version", "/tree", "/pr", "/git", "/test", "/lint",
         ];
         for cmd in &commands {
             assert!(
@@ -1870,6 +1875,79 @@ mod tests {
         assert!(
             cmd.is_none(),
             "Unknown project should not have a test command"
+        );
+    }
+
+    #[test]
+    fn test_lint_command_recognized() {
+        assert!(!is_unknown_command("/lint"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/lint"),
+            "/lint should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_lint_command_for_rust_project() {
+        let cmd = lint_command_for_project(&ProjectType::Rust);
+        assert!(cmd.is_some(), "Rust project should have a lint command");
+        let (label, args) = cmd.unwrap();
+        assert!(
+            label.contains("clippy"),
+            "Rust lint label should mention clippy"
+        );
+        assert_eq!(args[0], "cargo");
+        assert!(args.contains(&"clippy"));
+    }
+
+    #[test]
+    fn test_lint_command_for_node_project() {
+        let cmd = lint_command_for_project(&ProjectType::Node);
+        assert!(cmd.is_some(), "Node project should have a lint command");
+        let (label, args) = cmd.unwrap();
+        assert!(
+            label.contains("eslint"),
+            "Node lint label should mention eslint"
+        );
+        assert_eq!(args[0], "npx");
+        assert!(args.contains(&"eslint"));
+    }
+
+    #[test]
+    fn test_lint_command_for_python_project() {
+        let cmd = lint_command_for_project(&ProjectType::Python);
+        assert!(cmd.is_some(), "Python project should have a lint command");
+        let (label, _args) = cmd.unwrap();
+        assert!(
+            label.contains("ruff"),
+            "Python lint label should mention ruff"
+        );
+    }
+
+    #[test]
+    fn test_lint_command_for_go_project() {
+        let cmd = lint_command_for_project(&ProjectType::Go);
+        assert!(cmd.is_some(), "Go project should have a lint command");
+        let (label, args) = cmd.unwrap();
+        assert!(
+            label.contains("golangci-lint"),
+            "Go lint label should mention golangci-lint"
+        );
+        assert_eq!(args[0], "golangci-lint");
+    }
+
+    #[test]
+    fn test_lint_command_for_make_project() {
+        let cmd = lint_command_for_project(&ProjectType::Make);
+        assert!(cmd.is_none(), "Make project should not have a lint command");
+    }
+
+    #[test]
+    fn test_lint_command_for_unknown_project() {
+        let cmd = lint_command_for_project(&ProjectType::Unknown);
+        assert!(
+            cmd.is_none(),
+            "Unknown project should not have a lint command"
         );
     }
 
